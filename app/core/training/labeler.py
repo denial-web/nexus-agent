@@ -1,0 +1,201 @@
+"""
+Training flywheel — labeling queue service.
+
+When the critic tree halts or flags a generation, the failure trace
+is pushed to the labeling queue. Reviewed items are exported in
+fine-tuning format and fed back into the model improvement loop.
+"""
+import logging
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
+
+
+def push_failure(
+    trace_id: str,
+    source_node: str,
+    failure_type: str,
+    prompt: str,
+    response: Optional[str],
+    critic_output: dict,
+    db_session: Optional[Session] = None,
+) -> dict:
+    """Push a failure trace to the labeling queue."""
+    from app.models.labeling_queue import LabelingItem
+
+    item = LabelingItem(
+        id=uuid.uuid4().hex,
+        trace_id=trace_id,
+        source_node=source_node,
+        failure_type=failure_type,
+        prompt=prompt,
+        response=response or "",
+        critic_output=critic_output,
+        status="pending",
+    )
+
+    if db_session:
+        db_session.add(item)
+        db_session.commit()
+        db_session.refresh(item)
+        logger.info(
+            "Pushed failure to labeling queue: %s (source=%s, type=%s)",
+            item.id, source_node, failure_type,
+        )
+        return _to_dict(item)
+
+    return {
+        "id": item.id,
+        "trace_id": trace_id,
+        "source_node": source_node,
+        "failure_type": failure_type,
+        "status": "pending",
+    }
+
+
+def label_item(
+    item_id: str,
+    label: str,
+    reviewer_id: str,
+    corrected_response: Optional[str] = None,
+    reviewer_notes: Optional[str] = None,
+    db_session: Optional[Session] = None,
+) -> Optional[dict]:
+    """Apply a human label to a queued item."""
+    if not db_session:
+        return None
+
+    from app.models.labeling_queue import LabelingItem
+
+    item = db_session.query(LabelingItem).filter_by(id=item_id).first()
+    if not item:
+        return None
+
+    item.label = label
+    item.reviewer_id = reviewer_id
+    item.corrected_response = corrected_response
+    item.reviewer_notes = reviewer_notes
+    item.status = "labeled"
+    item.labeled_at = datetime.now(timezone.utc)
+
+    db_session.commit()
+    db_session.refresh(item)
+    return _to_dict(item)
+
+
+def get_queue(
+    status: str = "pending",
+    failure_type: Optional[str] = None,
+    limit: int = 50,
+    db_session: Optional[Session] = None,
+) -> list[dict]:
+    """Get items from the labeling queue."""
+    if not db_session:
+        return []
+
+    from app.models.labeling_queue import LabelingItem
+
+    q = db_session.query(LabelingItem).filter_by(status=status)
+    if failure_type:
+        q = q.filter_by(failure_type=failure_type)
+    items = q.order_by(LabelingItem.created_at.desc()).limit(limit).all()
+    return [_to_dict(i) for i in items]
+
+
+def export_for_training(
+    batch_size: int = 100,
+    batch_id: Optional[str] = None,
+    enrich_evidential: bool = False,
+    db_session: Optional[Session] = None,
+) -> list[dict]:
+    """
+    Export labeled items in fine-tuning format.
+
+    Only exports items with status='labeled' and label='correct_flag'.
+    Marks exported items so they aren't re-exported.
+
+    If batch_id is provided, uses it for idempotency; otherwise generates one.
+    If enrich_evidential is True, attaches uncertainty metadata from the trace.
+    """
+    if not db_session:
+        return []
+
+    from app.models.labeling_queue import LabelingItem
+
+    items = (
+        db_session.query(LabelingItem)
+        .filter_by(status="labeled", label="correct_flag")
+        .limit(batch_size)
+        .all()
+    )
+
+    if not batch_id:
+        batch_id = uuid.uuid4().hex[:12]
+
+    trace_map: dict = {}
+    calibration_ece: Optional[float] = None
+    if enrich_evidential and items:
+        from app.models.trace import Trace
+        from app.core.training.calibration import get_ece_tracker
+
+        trace_ids = [i.trace_id for i in items]
+        traces = db_session.query(Trace).filter(Trace.id.in_(trace_ids)).all()
+        trace_map = {t.id: t for t in traces}
+        report = get_ece_tracker().compute_ece()
+        calibration_ece = report.ece if report.num_samples > 0 else None
+
+    training_data = []
+
+    for item in items:
+        corrected = item.corrected_response or item.response
+        export_item: dict = {
+            "messages": [
+                {"role": "system", "content": "You are a safe, accurate AI assistant."},
+                {"role": "user", "content": item.prompt},
+                {"role": "assistant", "content": corrected},
+            ],
+            "metadata": {
+                "source": "labeling_queue",
+                "trace_id": item.trace_id,
+                "failure_type": item.failure_type,
+                "source_node": item.source_node,
+                "batch_id": batch_id,
+            },
+        }
+
+        if enrich_evidential and item.trace_id in trace_map:
+            from app.core.training.evidential import enrich_training_item
+            export_item = enrich_training_item(
+                export_item,
+                trace_map[item.trace_id],
+                calibration_ece=calibration_ece,
+            )
+
+        training_data.append(export_item)
+
+        item.status = "exported"
+        item.training_batch_id = batch_id
+        item.exported_at = datetime.now(timezone.utc)
+
+    if items:
+        db_session.commit()
+
+    logger.info("Exported %d items for training (batch=%s)", len(training_data), batch_id)
+    return training_data
+
+
+def _to_dict(item) -> dict:
+    return {
+        "id": item.id,
+        "trace_id": item.trace_id,
+        "source_node": item.source_node,
+        "failure_type": item.failure_type,
+        "status": item.status,
+        "label": item.label,
+        "reviewer_id": item.reviewer_id,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
