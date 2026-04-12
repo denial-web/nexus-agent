@@ -1,0 +1,197 @@
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+
+from app.db import get_db
+from app.models.approval_log import ApprovalRequest, ApprovalVote
+from app.models.labeling_queue import LabelingItem
+from app.models.trace import Trace
+from app.core.training.calibration import get_ece_tracker
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+_template_dir = Path(__file__).resolve().parent.parent / "templates"
+templates = Jinja2Templates(directory=str(_template_dir))
+
+
+@router.get("", response_class=HTMLResponse)
+def trace_list(request: Request, db: Session = Depends(get_db)):
+    traces = db.query(Trace).order_by(Trace.created_at.desc()).limit(100).all()
+    total = db.query(Trace).count()
+    completed = db.query(Trace).filter(Trace.status == "completed").count()
+    blocked = db.query(Trace).filter(Trace.status.in_(["blocked", "halted"])).count()
+
+    return templates.TemplateResponse(
+        request,
+        "traces.html",
+        {
+            "active": "traces",
+            "traces": traces,
+            "total": total,
+            "completed": completed,
+            "blocked": blocked,
+        },
+    )
+
+
+@router.get("/traces/{trace_id}", response_class=HTMLResponse)
+def trace_detail(trace_id: str, request: Request, db: Session = Depends(get_db)):
+    trace = db.query(Trace).filter(Trace.id == trace_id).first()
+    if not trace:
+        return HTMLResponse("<h1>Trace not found</h1>", status_code=404)
+
+    return templates.TemplateResponse(
+        request,
+        "trace_detail.html",
+        {"active": "traces", "trace": trace},
+    )
+
+
+@router.get("/labeling", response_class=HTMLResponse)
+def labeling_queue(request: Request, db: Session = Depends(get_db)):
+    items = (
+        db.query(LabelingItem)
+        .order_by(LabelingItem.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    pending = db.query(LabelingItem).filter(LabelingItem.status == "pending").count()
+    labeled = db.query(LabelingItem).filter(LabelingItem.status == "labeled").count()
+    exported = db.query(LabelingItem).filter(LabelingItem.status == "exported").count()
+
+    return templates.TemplateResponse(
+        request,
+        "labeling.html",
+        {
+            "active": "labeling",
+            "items": items,
+            "pending": pending,
+            "labeled": labeled,
+            "exported": exported,
+        },
+    )
+
+
+@router.post("/labeling/{item_id}/label")
+def apply_label(
+    item_id: str,
+    label: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    item = db.query(LabelingItem).filter(LabelingItem.id == item_id).first()
+    if item and item.status == "pending":
+        item.label = label
+        item.status = "labeled"
+        item.labeled_at = datetime.now(timezone.utc)
+        item.reviewer_id = "dashboard-user"
+        db.commit()
+        logger.info("Labeled item %s as %s", item_id, label)
+
+    return RedirectResponse(url="/dashboard/labeling", status_code=303)
+
+
+@router.get("/approvals", response_class=HTMLResponse)
+def approval_list(request: Request, db: Session = Depends(get_db)):
+    requests_list = (
+        db.query(ApprovalRequest)
+        .order_by(ApprovalRequest.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    pending = db.query(ApprovalRequest).filter(ApprovalRequest.status == "pending").count()
+    approved = db.query(ApprovalRequest).filter(ApprovalRequest.status == "approved").count()
+    denied = db.query(ApprovalRequest).filter(ApprovalRequest.status == "denied").count()
+
+    return templates.TemplateResponse(
+        request,
+        "approvals.html",
+        {
+            "active": "approvals",
+            "requests": requests_list,
+            "pending": pending,
+            "approved": approved,
+            "denied": denied,
+        },
+    )
+
+
+@router.post("/approvals/{request_id}/vote")
+def cast_vote(
+    request_id: str,
+    decision: str = Form(...),
+    approver_id: str = Form("dashboard-user"),
+    db: Session = Depends(get_db),
+):
+    approval = db.query(ApprovalRequest).filter(ApprovalRequest.id == request_id).first()
+    if not approval or approval.status != "pending":
+        return RedirectResponse(url="/dashboard/approvals", status_code=303)
+
+    vote = ApprovalVote(
+        request_id=request_id,
+        approver_id=approver_id,
+        decision=decision,
+    )
+    db.add(vote)
+
+    current = int(approval.received_approvals)
+    required = int(approval.required_approvals)
+
+    if decision == "approve":
+        current += 1
+        approval.received_approvals = str(current)
+        if current >= required:
+            approval.status = "approved"
+            approval.resolved_at = datetime.now(timezone.utc)
+    elif decision == "deny":
+        approval.status = "denied"
+        approval.resolved_at = datetime.now(timezone.utc)
+
+    db.commit()
+    logger.info("Vote on %s: %s by %s", request_id, decision, approver_id)
+
+    return RedirectResponse(url="/dashboard/approvals", status_code=303)
+
+
+@router.get("/calibration", response_class=HTMLResponse)
+def calibration_dashboard(request: Request):
+    tracker = get_ece_tracker()
+    report = tracker.compute_ece()
+
+    bins = []
+    for b in report.bins:
+        if b["count"] > 0:
+            bins.append({
+                "low": b["bin_lo"],
+                "high": b["bin_hi"],
+                "count": b["count"],
+                "avg_confidence": b["avg_confidence"],
+                "accuracy": b["avg_accuracy"],
+                "gap": b["avg_confidence"] - b["avg_accuracy"],
+            })
+
+    total_conf = sum(b["avg_confidence"] * b["count"] for b in report.bins if b["count"] > 0)
+    total_acc = sum(b["avg_accuracy"] * b["count"] for b in report.bins if b["count"] > 0)
+    total_count = sum(b["count"] for b in report.bins)
+
+    avg_confidence = total_conf / total_count if total_count else 0.0
+    accuracy = total_acc / total_count if total_count else 0.0
+
+    return templates.TemplateResponse(
+        request,
+        "calibration.html",
+        {
+            "active": "calibration",
+            "ece": report.ece,
+            "record_count": report.num_samples,
+            "bins": bins,
+            "avg_confidence": avg_confidence,
+            "accuracy": accuracy,
+        },
+    )

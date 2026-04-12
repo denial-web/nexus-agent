@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Nexus Agent{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+  <nav>
+    <div class="logo">Nexus<span>Agent</span></div>
+    <div class="links">
+      <a href="/dashboard" class="{% if active == 'traces' %}active{% endif %}">Traces</a>
+      <a href="/dashboard/labeling" class="{% if active == 'labeling' %}active{% endif %}">Labeling</a>
+      <a href="/dashboard/approvals" class="{% if active == 'approvals' %}active{% endif %}">Approvals</a>
+      <a href="/dashboard/calibration" class="{% if active == 'calibration' %}active{% endif %}">Calibration</a>
+    </div>
+  </nav>
+  <main>
+    <div class="container">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</body>
+</html>

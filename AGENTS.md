@@ -30,7 +30,8 @@ app/
 │   ├── traces.py           # GET /api/traces, GET /api/traces/{id}/replay
 │   ├── critic.py           # CRUD /api/critic/registry
 │   ├── governance.py       # Policies, approvals, labeling queue
-│   └── training.py         # Labeling, export, eval, fine-tuning endpoints
+│   ├── training.py         # Labeling, export, eval, fine-tuning endpoints
+│   └── dashboard.py        # Browser UI: traces, labeling, approvals, calibration
 ├── services/
 │   ├── integrity.py        # Hash-chain computation and verification
 │   ├── replay.py           # Critic re-evaluation service
@@ -54,6 +55,8 @@ app/
 │       ├── calibration.py  # ECE (Expected Calibration Error) tracker
 │       ├── evidential.py   # Uncertainty metadata enrichment for exports
 │       └── scheduler.py    # Background auto-export daemon
+├── templates/              # Jinja2 HTML templates for dashboard
+├── static/css/style.css    # Dashboard styles
 └── models/
     ├── trace.py            # Append-only audit log
     ├── critic_registry.py  # Hot-swappable critic configs (CriticNode model)
@@ -69,7 +72,7 @@ app/
 - **Pydantic v2** — use `model_config = ConfigDict(...)`, not `class Config`
 - **SQLAlchemy 2.0** style — `Column()`, `declarative_base()`
 - **Logging** — `logger = logging.getLogger(__name__)`, never `print()`
-- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 207 tests across 14 test files.
+- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 231 tests across 16 test files.
 - **Alembic** — `render_as_batch=True` for SQLite, migrations auto-generated
 
 ## Pipeline Flow (app/agent/pipeline.py)
@@ -91,7 +94,7 @@ Prompt
 
 ## Current State — All Phases Complete
 
-**207 passing tests** across 14 test files.
+**231 passing tests** across 16 test files.
 
 **Completed phases:**
 - **Phase 1**: Foundation — pipeline, models, immune scanner, arbiter, governance, tests
@@ -101,6 +104,7 @@ Prompt
 - **Phase 5**: A-S-FLC integration — LLM path decomposition, asymmetric risk evaluation, system hints to guide generation
 - **Phase 6**: Training flywheel — Doctrine Lab bridge, labeling API, ECE calibration, evidential loss enrichment, LoRA compare, scheduled export
 - **Phase 7**: Agent-Immune upgrade — 11-language injection patterns, Semantic Memory Bank, PromptHardener, session escalation tracker
+- **Dashboard**: Browser UI — trace explorer, labeling queue, approval console, calibration chart
 
 ## Running
 
@@ -110,6 +114,8 @@ alembic upgrade head
 uvicorn app.main:app --reload --port 9000
 pytest tests/ -v
 ```
+
+Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 
 ## Key Design Decisions
 

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Labeling Queue — Nexus Agent{% endblock %}
+{% block content %}
+<h1>Labeling Queue</h1>
+
+<div class="stats">
+  <div class="stat">
+    <div class="value">{{ pending }}</div>
+    <div class="label">Pending Review</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ labeled }}</div>
+    <div class="label">Labeled</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ exported }}</div>
+    <div class="label">Exported</div>
+  </div>
+</div>
+
+{% if items %}
+{% for item in items %}
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+    <div>
+      <span class="badge badge-{{ item.status }}">{{ item.status }}</span>
+      <span class="badge" style="background: var(--surface-alt); color: var(--text-dim);">{{ item.failure_type }}</span>
+      <span class="text-sm text-dim" style="margin-left: 8px;">{{ item.source_node }}</span>
+    </div>
+    <a href="/dashboard/traces/{{ item.trace_id }}" class="text-sm">View trace →</a>
+  </div>
+
+  <div class="mb-8"><strong>Prompt:</strong></div>
+  <pre style="margin-bottom: 12px;">{{ item.prompt[:500] }}{% if item.prompt|length > 500 %}…{% endif %}</pre>
+
+  <div class="mb-8"><strong>Response:</strong></div>
+  <pre style="margin-bottom: 16px;">{{ (item.response or '—')[:500] }}{% if (item.response or '')|length > 500 %}…{% endif %}</pre>
+
+  {% if item.status == 'pending' %}
+  <form method="POST" action="/dashboard/labeling/{{ item.id }}/label" style="display: flex; gap: 8px; align-items: center;">
+    <select name="label" class="btn" style="background: var(--surface-alt); color: var(--text); border: 1px solid var(--border);">
+      <option value="correct_flag">Correct Flag</option>
+      <option value="false_positive">False Positive</option>
+      <option value="needs_edit">Needs Edit</option>
+    </select>
+    <button type="submit" class="btn btn-primary btn-sm">Apply Label</button>
+  </form>
+  {% elif item.label %}
+  <div class="text-sm">Label: <strong>{{ item.label }}</strong></div>
+  {% endif %}
+</div>
+{% endfor %}
+{% else %}
+<div class="card empty">No items in the labeling queue. Critic halts will appear here automatically.</div>
+{% endif %}
+{% endblock %}

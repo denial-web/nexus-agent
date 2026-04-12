@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Traces — Nexus Agent{% endblock %}
+{% block content %}
+<h1>Execution Traces</h1>
+
+<div class="stats">
+  <div class="stat">
+    <div class="value">{{ total }}</div>
+    <div class="label">Total Traces</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ completed }}</div>
+    <div class="label">Completed</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ blocked }}</div>
+    <div class="label">Blocked / Halted</div>
+  </div>
+</div>
+
+{% if traces %}
+<div class="card" style="padding: 0; overflow: hidden;">
+  <table>
+    <thead>
+      <tr>
+        <th>Trace ID</th>
+        <th>Session</th>
+        <th>Status</th>
+        <th>Immune</th>
+        <th>Critic</th>
+        <th>Model</th>
+        <th>Latency</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in traces %}
+      <tr>
+        <td><a href="/dashboard/traces/{{ t.id }}" class="mono">{{ t.id[:12] }}…</a></td>
+        <td class="mono text-sm">{{ (t.session_id or '—')[:16] }}</td>
+        <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
+        <td><span class="badge badge-{{ t.immune_verdict or 'pass' }}">{{ t.immune_verdict or '—' }}</span></td>
+        <td><span class="badge badge-{{ t.critic_verdict or 'pass' }}">{{ t.critic_verdict or '—' }}</span></td>
+        <td class="text-sm">{{ t.model_id or 'mock' }}</td>
+        <td class="text-sm">{{ "%.0f"|format(t.latency_ms or 0) }}ms</td>
+        <td class="text-sm text-dim">{{ t.created_at.strftime('%m/%d %H:%M') if t.created_at else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card empty">No traces yet. Run the pipeline via <code>POST /api/agent/run</code> to generate traces.</div>
+{% endif %}
+{% endblock %}

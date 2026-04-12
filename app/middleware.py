@@ -27,7 +27,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not api_key:
             return await call_next(request)
 
-        if request.url.path in _EXEMPT_PATHS:
+        path = request.url.path
+        if path in _EXEMPT_PATHS or path.startswith("/dashboard") or path.startswith("/static"):
             return await call_next(request)
 
         provided = request.headers.get("X-API-Key", "")

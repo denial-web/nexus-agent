@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Trace {{ trace.id[:12] }} — Nexus Agent{% endblock %}
+{% block content %}
+<h1>Trace <span class="mono">{{ trace.id[:16] }}…</span></h1>
+
+<div class="pipeline-steps">
+  <div class="step">
+    <div class="step-name">1. Immune Input</div>
+    <div class="step-verdict"><span class="badge badge-{{ trace.immune_verdict or 'pass' }}">{{ trace.immune_verdict or 'pass' }}</span></div>
+    <div class="text-sm text-dim mt-16">Score: {{ "%.2f"|format(trace.immune_score or 0) }}</div>
+  </div>
+  <div class="step">
+    <div class="step-name">2. A-S-FLC</div>
+    <div class="step-verdict">{{ trace.asflc_chosen_path or '—' }}</div>
+    <div class="text-sm text-dim mt-16">Confidence: {{ "%.2f"|format(trace.asflc_confidence or 0) }} · Loops: {{ trace.asflc_loops or 0 }}</div>
+  </div>
+  <div class="step">
+    <div class="step-name">3. LLM Generation</div>
+    <div class="step-verdict">{{ trace.model_id or 'mock' }}</div>
+    <div class="text-sm text-dim mt-16">Tokens: {{ trace.token_count or 0 }}</div>
+  </div>
+  <div class="step">
+    <div class="step-name">4. Critic</div>
+    <div class="step-verdict"><span class="badge badge-{{ trace.critic_verdict or 'pass' }}">{{ trace.critic_verdict or 'pass' }}</span></div>
+    <div class="text-sm text-dim mt-16">Rollbacks: {{ trace.critic_rollback_count or 0 }}</div>
+  </div>
+  <div class="step">
+    <div class="step-name">5. Governance</div>
+    <div class="step-verdict"><span class="badge badge-{{ trace.governance_status or 'auto' }}">{{ trace.governance_status or 'auto' }}</span></div>
+    <div class="text-sm text-dim mt-16">{{ trace.governance_policy_id[:12] if trace.governance_policy_id else '—' }}</div>
+  </div>
+  <div class="step">
+    <div class="step-name">6. Output Scan</div>
+    <div class="step-verdict"><span class="badge badge-{{ trace.output_scan_verdict or 'pass' }}">{{ trace.output_scan_verdict or 'pass' }}</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Details</h2>
+  <dl class="detail-grid">
+    <dt>Trace ID</dt><dd class="mono">{{ trace.id }}</dd>
+    <dt>Session</dt><dd class="mono">{{ trace.session_id or '—' }}</dd>
+    <dt>Status</dt><dd><span class="badge badge-{{ trace.status }}">{{ trace.status }}</span></dd>
+    <dt>Latency</dt><dd>{{ "%.0f"|format(trace.latency_ms or 0) }}ms</dd>
+    <dt>Created</dt><dd>{{ trace.created_at }}</dd>
+    <dt>Trace Hash</dt><dd class="mono text-sm">{{ trace.trace_hash or '—' }}</dd>
+    <dt>Prev Hash</dt><dd class="mono text-sm">{{ trace.prev_hash or '—' }}</dd>
+  </dl>
+</div>
+
+<div class="card">
+  <h2>Prompt</h2>
+  <pre>{{ trace.prompt }}</pre>
+</div>
+
+{% if trace.response %}
+<div class="card">
+  <h2>Response</h2>
+  <pre>{{ trace.response }}</pre>
+</div>
+{% endif %}
+
+{% if trace.critic_scores %}
+<div class="card">
+  <h2>Critic Scores</h2>
+  <table>
+    <thead><tr><th>Node</th><th>Score</th><th>Verdict</th><th>Reasoning</th></tr></thead>
+    <tbody>
+      {% for name, data in trace.critic_scores.items() %}
+      <tr>
+        <td class="mono">{{ name }}</td>
+        <td>
+          <span class="score-bar"><span class="fill" style="width: {{ (data.score or 0) * 100 }}%; background: {% if data.score >= 0.7 %}var(--green){% elif data.score >= 0.4 %}var(--yellow){% else %}var(--red){% endif %};"></span></span>
+          {{ "%.2f"|format(data.score or 0) }}
+        </td>
+        <td><span class="badge badge-{{ data.verdict }}">{{ data.verdict }}</span></td>
+        <td class="text-sm">{{ data.reasoning or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if trace.error %}
+<div class="card" style="border-color: var(--red);">
+  <h2 style="color: var(--red);">Error</h2>
+  <pre>{{ trace.error }}</pre>
+</div>
+{% endif %}
+{% endblock %}

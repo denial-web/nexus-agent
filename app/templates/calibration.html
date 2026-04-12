@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Calibration — Nexus Agent{% endblock %}
+{% block content %}
+<h1>Calibration Dashboard</h1>
+
+<div class="stats">
+  <div class="stat">
+    <div class="value">{{ "%.4f"|format(ece) }}</div>
+    <div class="label">Expected Calibration Error</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ record_count }}</div>
+    <div class="label">Calibration Records</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ "%.2f"|format(avg_confidence) }}</div>
+    <div class="label">Avg Confidence</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ "%.2f"|format(accuracy) }}</div>
+    <div class="label">Actual Accuracy</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Calibration Bins</h2>
+  <p class="text-sm text-dim mb-8">Each bin groups predictions by confidence range and shows the gap between expected and actual accuracy.</p>
+
+  {% if bins %}
+  <table>
+    <thead>
+      <tr>
+        <th>Bin Range</th>
+        <th>Count</th>
+        <th>Avg Confidence</th>
+        <th>Actual Accuracy</th>
+        <th>Gap</th>
+        <th>Visual</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in bins %}
+      <tr>
+        <td class="mono">{{ "%.1f"|format(b.low) }} – {{ "%.1f"|format(b.high) }}</td>
+        <td>{{ b.count }}</td>
+        <td>{{ "%.3f"|format(b.avg_confidence) }}</td>
+        <td>{{ "%.3f"|format(b.accuracy) }}</td>
+        <td style="color: {% if b.gap|abs < 0.05 %}var(--green){% elif b.gap|abs < 0.15 %}var(--yellow){% else %}var(--red){% endif %};">
+          {{ "%+.3f"|format(b.gap) }}
+        </td>
+        <td>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 120px; height: 20px; background: var(--surface-alt); border-radius: 4px; position: relative; overflow: hidden;">
+              <div style="position: absolute; left: 0; top: 0; height: 100%; width: {{ (b.avg_confidence * 100)|int }}%; background: var(--accent); opacity: 0.5; border-radius: 4px;"></div>
+              <div style="position: absolute; left: 0; top: 0; height: 100%; width: {{ (b.accuracy * 100)|int }}%; background: var(--green); opacity: 0.6; border-radius: 4px;"></div>
+            </div>
+            <span class="text-sm text-dim">
+              <span style="color: var(--accent);">■</span> conf
+              <span style="color: var(--green);">■</span> acc
+            </span>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No calibration data yet. Run the pipeline to collect critic scores.</div>
+  {% endif %}
+</div>
+{% endblock %}

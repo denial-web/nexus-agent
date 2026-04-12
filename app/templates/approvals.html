@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Approvals — Nexus Agent{% endblock %}
+{% block content %}
+<h1>Approval Console</h1>
+
+<div class="stats">
+  <div class="stat">
+    <div class="value">{{ pending }}</div>
+    <div class="label">Pending</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ approved }}</div>
+    <div class="label">Approved</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ denied }}</div>
+    <div class="label">Denied</div>
+  </div>
+</div>
+
+{% if requests %}
+{% for req in requests %}
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+    <div>
+      <span class="badge badge-{{ req.status }}">{{ req.status }}</span>
+      <span class="mono text-sm" style="margin-left: 8px;">{{ req.action_type }}</span>
+    </div>
+    <span class="text-sm text-dim">{{ req.received_approvals }}/{{ req.required_approvals }} approvals</span>
+  </div>
+
+  <dl class="detail-grid">
+    <dt>Request ID</dt><dd class="mono text-sm">{{ req.id[:16] }}…</dd>
+    <dt>Trace</dt><dd><a href="/dashboard/traces/{{ req.trace_id }}" class="mono text-sm">{{ req.trace_id[:16] }}…</a></dd>
+    <dt>Risk Level</dt><dd><span class="badge badge-{{ 'red' if req.risk_level == 'critical' else 'yellow' }}">{{ req.risk_level }}</span></dd>
+    <dt>Expires</dt><dd class="text-sm">{{ req.expires_at or '—' }}</dd>
+  </dl>
+
+  {% if req.status == 'pending' %}
+  <div class="mt-16" style="display: flex; gap: 8px;">
+    <form method="POST" action="/dashboard/approvals/{{ req.id }}/vote">
+      <input type="hidden" name="decision" value="approve">
+      <input type="hidden" name="approver_id" value="dashboard-user">
+      <button type="submit" class="btn btn-green btn-sm">Approve</button>
+    </form>
+    <form method="POST" action="/dashboard/approvals/{{ req.id }}/vote">
+      <input type="hidden" name="decision" value="deny">
+      <input type="hidden" name="approver_id" value="dashboard-user">
+      <button type="submit" class="btn btn-red btn-sm">Deny</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+{% else %}
+<div class="card empty">No approval requests. Actions requiring approval will appear here.</div>
+{% endif %}
+{% endblock %}

@@ -2,19 +2,23 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.config import settings
 from app.db import Base, SessionLocal, engine
+from app.middleware import AuthMiddleware, RateLimitMiddleware
 from app.api.agent import router as agent_router
 from app.api.traces import router as traces_router
 from app.api.critic import router as critic_router
 from app.api.governance import router as governance_router
 from app.api.training import router as training_router
+from app.api.dashboard import router as dashboard_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -182,8 +186,6 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-from app.middleware import AuthMiddleware, RateLimitMiddleware
-
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="0.1.0",
@@ -219,8 +221,11 @@ def readiness_check():
     }
 
 
+app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
+
 app.include_router(agent_router)
 app.include_router(traces_router)
 app.include_router(critic_router)
 app.include_router(governance_router)
 app.include_router(training_router)
+app.include_router(dashboard_router)
