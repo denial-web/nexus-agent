@@ -182,12 +182,17 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
+from app.middleware import AuthMiddleware, RateLimitMiddleware
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="0.1.0",
     description="Zero-Trust & Self-Evolving AI Agent System",
     lifespan=lifespan,
 )
+
+app.add_middleware(AuthMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 
 @app.get("/health")

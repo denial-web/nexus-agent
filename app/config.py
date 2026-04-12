@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Nexus Agent"
     DATABASE_URL: str = "sqlite:///./nexus.db"
 
+    NEXUS_API_KEY: str = ""
+    RATE_LIMIT_RPM: int = 30
+
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
     OPENAI_API_KEY: str = ""
