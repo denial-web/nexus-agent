@@ -1,10 +1,13 @@
 """
-Unified LLM provider: Gemini, OpenAI, or mock fallback.
+Unified LLM provider: Gemini, OpenAI, DeepSeek, or mock fallback.
 
 Provider selection:
 - Explicit model_id starting with "gpt" or "ft:" → OpenAI
 - Explicit model_id starting with "gemini" or "models/" → Gemini
-- No model_id: prefer Gemini if GEMINI_API_KEY is set, else OpenAI, else mock
+- Explicit model_id starting with "deepseek" → DeepSeek
+- No model_id: prefer Gemini → OpenAI → DeepSeek → mock
+
+DeepSeek uses the OpenAI SDK with a custom base_url.
 
 Falls back to mock when the required API key is missing (even if model_id
 was explicitly requested), logging a warning rather than crashing.
@@ -25,6 +28,8 @@ _gemini_client: Any = None
 _gemini_client_key: str = ""
 _openai_client: Any = None
 _openai_client_key: str = ""
+_deepseek_client: Any = None
+_deepseek_client_key: str = ""
 
 
 def _get_gemini_client(api_key: str) -> Any:
@@ -45,13 +50,29 @@ def _get_openai_client(api_key: str) -> Any:
     return _openai_client
 
 
+def _get_deepseek_client(api_key: str) -> Any:
+    global _deepseek_client, _deepseek_client_key
+    if _deepseek_client is None or _deepseek_client_key != api_key:
+        import openai
+        _deepseek_client = openai.OpenAI(
+            api_key=api_key,
+            base_url=settings.DEEPSEEK_BASE_URL,
+        )
+        _deepseek_client_key = api_key
+    return _deepseek_client
+
+
 def reset_clients() -> None:
     """Reset cached clients (useful for tests)."""
-    global _gemini_client, _gemini_client_key, _openai_client, _openai_client_key
+    global _gemini_client, _gemini_client_key
+    global _openai_client, _openai_client_key
+    global _deepseek_client, _deepseek_client_key
     _gemini_client = None
     _gemini_client_key = ""
     _openai_client = None
     _openai_client_key = ""
+    _deepseek_client = None
+    _deepseek_client_key = ""
 
 
 def mock_llm_text(prompt: str) -> str:
@@ -81,6 +102,7 @@ def _resolve_route(
     mid = (model_id or "").strip()
     gemini_key = settings.GEMINI_API_KEY.strip()
     openai_key = settings.OPENAI_API_KEY.strip()
+    deepseek_key = settings.DEEPSEEK_API_KEY.strip()
 
     if mid:
         lower = mid.lower()
@@ -94,11 +116,18 @@ def _resolve_route(
                 return ("gemini", mid, gemini_key)
             logger.warning("model_id %r requires Gemini but GEMINI_API_KEY is empty; falling back to mock", mid)
             return ("mock", "mock", "")
+        if lower.startswith("deepseek"):
+            if deepseek_key:
+                return ("deepseek", mid, deepseek_key)
+            logger.warning("model_id %r requires DeepSeek but DEEPSEEK_API_KEY is empty; falling back to mock", mid)
+            return ("mock", "mock", "")
 
     if gemini_key:
         return ("gemini", settings.GEMINI_MODEL, gemini_key)
     if openai_key:
         return ("openai", settings.OPENAI_MODEL, openai_key)
+    if deepseek_key:
+        return ("deepseek", settings.DEEPSEEK_MODEL, deepseek_key)
     return ("mock", "mock", "")
 
 
@@ -138,7 +167,7 @@ def _should_retry(exc: BaseException, provider: str) -> bool:
         return True
     if provider == "gemini":
         return _gemini_retryable(exc)
-    if provider == "openai":
+    if provider in ("openai", "deepseek"):
         return _openai_retryable(exc)
     return False
 
@@ -216,6 +245,39 @@ def _call_openai(
     return text, response.model or model, token_count, raw
 
 
+def _call_deepseek(
+    prompt: str,
+    model: str,
+    api_key: str,
+    system_prompt: Optional[str],
+) -> tuple[str, str, int, Optional[dict[str, Any]]]:
+    client = _get_deepseek_client(api_key)
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+    )
+    choice = response.choices[0]
+    text = (choice.message.content or "").strip()
+    token_count = 0
+    if response.usage is not None:
+        token_count = int(response.usage.total_tokens or 0)
+    if token_count == 0:
+        token_count = _estimate_tokens(text)
+
+    raw: Optional[dict[str, Any]] = None
+    try:
+        raw = response.model_dump()
+    except Exception:
+        raw = None
+
+    return text, response.model or model, token_count, raw
+
+
 def _mock_response(prompt: str, latency_start: float) -> LLMResponse:
     text = mock_llm_text(prompt)
     latency_ms = (time.perf_counter() - latency_start) * 1000
@@ -246,6 +308,10 @@ def generate(
         try:
             if route_provider == "gemini":
                 text, used_model, token_count, raw = _call_gemini(
+                    prompt, resolved_model, api_key, system_prompt
+                )
+            elif route_provider == "deepseek":
+                text, used_model, token_count, raw = _call_deepseek(
                     prompt, resolved_model, api_key, system_prompt
                 )
             else:
@@ -336,6 +402,38 @@ def _collect_stream_openai(
     ]
 
 
+def _collect_stream_deepseek(
+    prompt: str,
+    model: str,
+    api_key: str,
+    system_prompt: Optional[str],
+) -> list[LLMChunk]:
+    """Consume the DeepSeek stream fully before returning chunks."""
+    client = _get_deepseek_client(api_key)
+
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    stream = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        stream=True,
+    )
+    pieces: list[str] = []
+    for event in stream:
+        choice = event.choices[0]
+        delta = choice.delta
+        if delta and delta.content:
+            pieces.append(delta.content)
+
+    return [
+        LLMChunk(text=p, index=i, is_final=i == len(pieces) - 1)
+        for i, p in enumerate(pieces)
+    ]
+
+
 def generate_stream(
     prompt: str,
     model_id: Optional[str] = None,
@@ -359,6 +457,8 @@ def generate_stream(
         try:
             if route_provider == "gemini":
                 collected = _collect_stream_gemini(prompt, resolved_model, api_key, system_prompt)
+            elif route_provider == "deepseek":
+                collected = _collect_stream_deepseek(prompt, resolved_model, api_key, system_prompt)
             else:
                 collected = _collect_stream_openai(prompt, resolved_model, api_key, system_prompt)
             yield from collected

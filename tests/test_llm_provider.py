@@ -17,6 +17,7 @@ from app.core.llm.provider import (
 def _clean_state(monkeypatch):
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
     monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "")
     reset_clients()
 
 
@@ -49,6 +50,35 @@ class TestResolveRoute:
         prov, model, _ = _resolve_route("ft:gpt-4o:my-org:custom:id")
         assert prov == "openai"
         assert model.startswith("ft:")
+
+    def test_deepseek_explicit_model_with_key(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "ds-k")
+        prov, model, key = _resolve_route("deepseek-chat")
+        assert prov == "deepseek"
+        assert model == "deepseek-chat"
+        assert key == "ds-k"
+
+    def test_deepseek_explicit_model_needs_key(self):
+        prov, model, key = _resolve_route("deepseek-reasoner")
+        assert prov == "mock"
+
+    def test_deepseek_auto_select_after_others(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "ds-k")
+        prov, model, key = _resolve_route(None)
+        assert prov == "deepseek"
+        assert key == "ds-k"
+
+    def test_auto_select_prefers_gemini_over_deepseek(self, monkeypatch):
+        monkeypatch.setattr(settings, "GEMINI_API_KEY", "g-k")
+        monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "ds-k")
+        prov, _, _ = _resolve_route(None)
+        assert prov == "gemini"
+
+    def test_auto_select_prefers_openai_over_deepseek(self, monkeypatch):
+        monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-x")
+        monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "ds-k")
+        prov, _, _ = _resolve_route(None)
+        assert prov == "openai"
 
 
 class TestMockFallback:
@@ -125,6 +155,76 @@ class TestGeminiProvider:
                 generate("x", model_id="gemini-2.0-flash")
 
         assert mock_client.models.generate_content.call_count == 1
+
+
+class TestDeepSeekProvider:
+    def _fake_response(self, text="deepseek says hi", total_tokens=80, model="deepseek-chat"):
+        usage = MagicMock()
+        usage.total_tokens = total_tokens
+        message = MagicMock()
+        message.content = f"  {text}  "
+        choice = MagicMock()
+        choice.message = message
+        resp = MagicMock()
+        resp.choices = [choice]
+        resp.usage = usage
+        resp.model = model
+        resp.model_dump = lambda: {"id": "cmpl-ds"}
+        return resp
+
+    def test_generate(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "ds-fake")
+
+        mock_ds = MagicMock()
+        mock_ds.chat.completions.create.return_value = self._fake_response()
+
+        with patch("openai.OpenAI", return_value=mock_ds):
+            reset_clients()
+            out = generate("hi", model_id="deepseek-chat")
+
+        assert out.provider == "deepseek"
+        assert out.token_count == 80
+        assert out.text == "deepseek says hi"
+        mock_ds.chat.completions.create.assert_called_once()
+
+    def test_retries_on_rate_limit(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "ds-fake")
+        import openai
+
+        mock_ds = MagicMock()
+        rate_err = openai.RateLimitError(
+            message="rate limited",
+            response=MagicMock(status_code=429, headers={}),
+            body=None,
+        )
+        mock_ds.chat.completions.create.side_effect = [
+            rate_err,
+            self._fake_response("ok after retry", 5),
+        ]
+
+        with patch("openai.OpenAI", return_value=mock_ds):
+            reset_clients()
+            with patch("app.core.llm.provider._sleep_backoff"):
+                out = generate("x", model_id="deepseek-chat")
+
+        assert out.text == "ok after retry"
+        assert mock_ds.chat.completions.create.call_count == 2
+
+    def test_uses_custom_base_url(self, monkeypatch):
+        monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "ds-fake")
+        monkeypatch.setattr(settings, "DEEPSEEK_BASE_URL", "https://custom.deepseek.test")
+
+        with patch("openai.OpenAI") as mock_openai_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = self._fake_response()
+            mock_openai_cls.return_value = mock_client
+            reset_clients()
+            generate("hi", model_id="deepseek-chat")
+
+            mock_openai_cls.assert_called_with(
+                api_key="ds-fake",
+                base_url="https://custom.deepseek.test",
+            )
 
 
 class TestOpenAIProvider:

@@ -1,0 +1,47 @@
+services:
+  nexus-agent:
+    build: .
+    ports:
+      - "9000:9000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=sqlite:///./nexus.db
+    volumes:
+      - nexus-data:/app/data
+    restart: unless-stopped
+
+  nexus-agent-pg:
+    build: .
+    ports:
+      - "9000:9000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://nexus:nexus@postgres:5432/nexus_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+      POSTGRES_DB: nexus_db
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    profiles:
+      - postgres
+
+volumes:
+  nexus-data:
+  pg-data:

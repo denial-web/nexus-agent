@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.0-flash"
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_MODEL: str = "deepseek-chat"
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
 
     # Covernor governance
     APPROVAL_QUORUM: int = 2

@@ -68,10 +68,11 @@ Build a production-grade AI agent system that merges a **Zero-Trust Agent Pipeli
 ## Phase 2: Live LLM Integration ✅ COMPLETE
 
 **What was built:**
-- `app/core/llm/provider.py` — Unified Gemini/OpenAI/mock provider with retry (3 attempts, exponential backoff), token counting, latency tracking, and API-key-aware client caching
+- `app/core/llm/provider.py` — Unified Gemini/OpenAI/DeepSeek/mock provider with retry (3 attempts, exponential backoff), token counting, latency tracking, and API-key-aware client caching. DeepSeek uses OpenAI SDK with custom `base_url`.
 - `app/core/llm/models.py` — `LLMResponse` and `LLMChunk` dataclasses
 - `Arbiter.evaluate_stream()` — Chunked streaming evaluation with `[UNC]` rollback insertion and max-rollback halting
 - Pipeline sets `model_id` and `token_count` on every trace
+- Auto-selection priority: Gemini → OpenAI → DeepSeek → mock
 - Mock fallback when no API keys are configured
 
 ---
@@ -271,7 +272,7 @@ Failure traces awaiting human review for the training flywheel.
 
 ---
 
-## Testing — 199 tests across 14 files
+## Testing — 207 tests across 14 files
 
 - All tests in `tests/` directory
 - Fixtures in `tests/conftest.py` (test DB, session, TestClient)
@@ -290,7 +291,7 @@ Failure traces awaiting human review for the training flywheel.
 | `test_covernor.py` | Policy engine, ECDSA tokens, K-of-N approval |
 | `test_asflc.py` | A-S-FLC engine, convergence, chain regret |
 | `test_analyzer.py` | LLM path decomposition (mocked) |
-| `test_llm_provider.py` | Gemini/OpenAI/mock providers, retry logic |
+| `test_llm_provider.py` | Gemini/OpenAI/DeepSeek/mock providers, retry logic, routing |
 | `test_streaming_critic.py` | Streaming evaluation, [UNC] insertion, max rollbacks |
 | `test_re_evaluate.py` | Critic replay, drift detection, 404 handling |
 | `test_governance.py` | Full approval workflow, expiry, hash chain verification |
@@ -310,10 +311,19 @@ uvicorn app.main:app --reload --port 9000
 # Tests
 pytest tests/ -v --tb=short
 
+# Lint
+ruff check app/ tests/
+
 # New migration after model changes
 alembic revision --autogenerate -m "description"
 alembic upgrade head
 
 # Check existing tables
 alembic current
+
+# Docker (SQLite, default)
+docker compose up --build
+
+# Docker (PostgreSQL)
+docker compose --profile postgres up --build
 ```

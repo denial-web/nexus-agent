@@ -12,7 +12,7 @@ Nexus Agent is a **Zero-Trust & Self-Evolving AI Agent System**. It wraps LLM ca
 
 - **Python 3.13**, FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2
 - **Database**: SQLite (dev), PostgreSQL (prod)
-- **AI providers**: Google Gemini (`google-genai`), OpenAI (`openai`) — both already in `requirements.txt`
+- **AI providers**: Google Gemini (`google-genai`), OpenAI (`openai`), DeepSeek (OpenAI-compatible) — all in `requirements.txt`
 - **Crypto**: `cryptography` (for ECDSA capability tokens)
 - **Testing**: pytest + httpx TestClient
 
@@ -69,7 +69,7 @@ app/
 - **Pydantic v2** — use `model_config = ConfigDict(...)`, not `class Config`
 - **SQLAlchemy 2.0** style — `Column()`, `declarative_base()`
 - **Logging** — `logger = logging.getLogger(__name__)`, never `print()`
-- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 199 tests across 14 test files.
+- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 207 tests across 14 test files.
 - **Alembic** — `render_as_batch=True` for SQLite, migrations auto-generated
 
 ## Pipeline Flow (app/agent/pipeline.py)
@@ -79,7 +79,7 @@ Prompt
   → Step 1: Immune input scan (multi-language injection detection, memory bank,
              escalation tracker; prompt hardening on FLAG verdicts)
   → Step 2: A-S-FLC decision analysis (LLM path decomposition → system hint)
-  → Step 3: LLM generation (Gemini / OpenAI / mock fallback)
+  → Step 3: LLM generation (Gemini / OpenAI / DeepSeek / mock fallback)
   → Step 4: Arbiter critic evaluation (DB-backed + heuristic nodes)
       → If HALT: push to labeling queue, return error
   → Step 5: Covernor governance check (default-deny policy engine)
@@ -91,11 +91,11 @@ Prompt
 
 ## Current State — All Phases Complete
 
-**199 passing tests** across 14 test files.
+**207 passing tests** across 14 test files.
 
 **Completed phases:**
 - **Phase 1**: Foundation — pipeline, models, immune scanner, arbiter, governance, tests
-- **Phase 2**: Live LLM integration — Gemini/OpenAI/mock providers, streaming critic, `model_id`/`token_count` on traces
+- **Phase 2**: Live LLM integration — Gemini/OpenAI/DeepSeek/mock providers, streaming critic, `model_id`/`token_count` on traces
 - **Phase 3**: DB-backed LLM critics — `Arbiter.load_from_registry()`, LLM reasoning/injection critics, re-evaluate endpoint
 - **Phase 4**: Full governance — ECDSA tokens, K-of-N approval with quorum, hash-chained traces, approval expiration
 - **Phase 5**: A-S-FLC integration — LLM path decomposition, asymmetric risk evaluation, system hints to guide generation
