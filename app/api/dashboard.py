@@ -1,5 +1,7 @@
+import hashlib
+import hmac
 import logging
-import secrets
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -7,6 +9,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from starlette.responses import Response
 
 from app.config import settings
 from app.core.training.calibration import get_ece_tracker
@@ -22,23 +25,41 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 _template_dir = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_template_dir))
 
+_CSRF_MAX_AGE = 3600
+
+
+def _csrf_key() -> bytes:
+    raw = settings.SESSION_SECRET.strip() or "dev-csrf-not-for-production"
+    return hashlib.sha256(raw.encode()).digest()
+
 
 def _issue_csrf(request: Request) -> str | None:
+    """Issue an HMAC-based CSRF token (stateless — safe across multiple tabs)."""
     if not settings.ENFORCE_DASHBOARD_CSRF:
         return None
-    token = secrets.token_urlsafe(32)
-    request.session["csrf_token"] = token
-    return token
+    ts = str(int(time.time()))
+    sig = hmac.new(_csrf_key(), ts.encode(), hashlib.sha256).hexdigest()
+    return f"{ts}.{sig}"
 
 
 def _csrf_valid(request: Request, form_token: str | None) -> bool:
     if not settings.ENFORCE_DASHBOARD_CSRF:
         return True
-    return bool(form_token) and form_token == request.session.get("csrf_token")
+    if not form_token or "." not in form_token:
+        return False
+    ts_str, sig = form_token.split(".", 1)
+    expected = hmac.new(_csrf_key(), ts_str.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return False
+    try:
+        age = int(time.time()) - int(ts_str)
+        return 0 <= age <= _CSRF_MAX_AGE
+    except ValueError:
+        return False
 
 
 @router.get("", response_class=HTMLResponse)
-def trace_list(request: Request, db: Session = Depends(get_db)):
+def trace_list(request: Request, db: Session = Depends(get_db)) -> Response:
     traces = db.query(Trace).order_by(Trace.created_at.desc()).limit(100).all()
     total = db.query(Trace).count()
     completed = db.query(Trace).filter(Trace.status == "completed").count()
@@ -58,7 +79,7 @@ def trace_list(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/traces/{trace_id}", response_class=HTMLResponse)
-def trace_detail(trace_id: str, request: Request, db: Session = Depends(get_db)):
+def trace_detail(trace_id: str, request: Request, db: Session = Depends(get_db)) -> Response:
     trace = db.query(Trace).filter(Trace.id == trace_id).first()
     if not trace:
         return HTMLResponse("<h1>Trace not found</h1>", status_code=404)
@@ -71,7 +92,7 @@ def trace_detail(trace_id: str, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/labeling", response_class=HTMLResponse)
-def labeling_queue(request: Request, db: Session = Depends(get_db)):
+def labeling_queue(request: Request, db: Session = Depends(get_db)) -> Response:
     items = db.query(LabelingItem).order_by(LabelingItem.created_at.desc()).limit(100).all()
     pending = db.query(LabelingItem).filter(LabelingItem.status == "pending").count()
     labeled = db.query(LabelingItem).filter(LabelingItem.status == "labeled").count()
@@ -99,7 +120,7 @@ def apply_label(
     label: str = Form(...),
     csrf_token: str | None = Form(None),
     db: Session = Depends(get_db),
-):
+) -> Response:
     if not _csrf_valid(request, csrf_token):
         return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
 
@@ -116,7 +137,7 @@ def apply_label(
 
 
 @router.get("/approvals", response_class=HTMLResponse)
-def approval_list(request: Request, db: Session = Depends(get_db)):
+def approval_list(request: Request, db: Session = Depends(get_db)) -> Response:
     requests_list = db.query(ApprovalRequest).order_by(ApprovalRequest.created_at.desc()).limit(100).all()
     pending = db.query(ApprovalRequest).filter(ApprovalRequest.status == "pending").count()
     approved = db.query(ApprovalRequest).filter(ApprovalRequest.status == "approved").count()
@@ -145,7 +166,7 @@ def cast_vote(
     approver_id: str = Form("dashboard-user"),
     csrf_token: str | None = Form(None),
     db: Session = Depends(get_db),
-):
+) -> Response:
     if not _csrf_valid(request, csrf_token):
         return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
 
@@ -180,7 +201,7 @@ def cast_vote(
 
 
 @router.get("/calibration", response_class=HTMLResponse)
-def calibration_dashboard(request: Request):
+def calibration_dashboard(request: Request) -> Response:
     tracker = get_ece_tracker()
     report = tracker.compute_ece()
 

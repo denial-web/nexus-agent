@@ -1,7 +1,9 @@
+import sqlite3
 from collections.abc import Generator
+from typing import Any
 
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.config import settings
 
@@ -14,7 +16,7 @@ engine = create_engine(settings.DATABASE_URL, connect_args=_connect_args)
 if settings.DATABASE_URL.startswith("sqlite"):
 
     @event.listens_for(engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, connection_record):
+    def _set_sqlite_pragma(dbapi_conn: sqlite3.Connection, connection_record: Any) -> None:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
@@ -25,7 +27,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-def get_db() -> Generator:
+def get_db() -> Generator[Session]:
     db = SessionLocal()
     try:
         yield db

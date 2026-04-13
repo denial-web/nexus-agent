@@ -14,6 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -24,6 +25,7 @@ from app.core.immune.scanner import Verdict, harden_prompt, scan_input, scan_out
 from app.core.llm.provider import generate
 from app.core.training.calibration import record_critic_calibration
 from app.core.training.labeler import push_failure
+from app.metrics import PIPELINE_RUNS, record_critic_scores
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,7 @@ def run(
                 db_session=db_session,
             )
         _persist_trace(result, prompt, db_session)
+        _record_run(result)
         return result
 
     if input_scan.verdict == Verdict.FLAG:
@@ -181,6 +184,7 @@ def run(
                 db_session=db_session,
             )
         _persist_trace(result, prompt, db_session)
+        _record_run(result)
         return result
 
     result.critic_result = {
@@ -195,6 +199,7 @@ def run(
         actual_verdict=critic_result.verdict,
         trace_id=trace_id,
     )
+    record_critic_scores(critic_result.scores)
 
     if critic_result.verdict == "halt":
         result.status = "halted"
@@ -205,6 +210,7 @@ def run(
             _push_critic_failure(trace_id, prompt, response, critic_result, db_session)
 
         _persist_trace(result, prompt, db_session)
+        _record_run(result)
         return result
 
     # ── Step 5: Governance check ────────────────────────
@@ -235,6 +241,7 @@ def run(
                 db_session=db_session,
             )
         _persist_trace(result, prompt, db_session)
+        _record_run(result)
         return result
 
     if gov_decision.decision == "require_approval":
@@ -262,6 +269,7 @@ def run(
             result.approval_request_id = approval.id
             result.governance["approval_request_id"] = approval.id
         _persist_trace(result, prompt, db_session)
+        _record_run(result)
         return result
 
     # ── Step 6: Output scan ─────────────────────────────
@@ -287,6 +295,7 @@ def run(
                 db_session=db_session,
             )
         _persist_trace(result, prompt, db_session)
+        _record_run(result)
         return result
 
     # ── Step 7: Success ─────────────────────────────────
@@ -294,10 +303,11 @@ def run(
     result.response = response
     result.latency_ms = _elapsed(start)
     _persist_trace(result, prompt, db_session)
+    _record_run(result)
     return result
 
 
-def _persist_trace(result: PipelineResult, prompt: str, db_session: Session | None):
+def _persist_trace(result: PipelineResult, prompt: str, db_session: Session | None) -> None:
     """Write trace to the audit log."""
     if not db_session:
         return
@@ -360,6 +370,7 @@ def _persist_trace(result: PipelineResult, prompt: str, db_session: Session | No
         db_session.add(trace)
         db_session.commit()
     except Exception:
+        db_session.rollback()
         logger.exception("Failed to persist trace %s", result.trace_id)
         raise
 
@@ -381,10 +392,17 @@ def _push_pipeline_failure(
         response=response,
         critic_output=detail,
         db_session=db_session,
+        commit=False,
     )
 
 
-def _push_critic_failure(trace_id, prompt, response, critic_result, db_session):
+def _push_critic_failure(
+    trace_id: str,
+    prompt: str,
+    response: str,
+    critic_result: Any,
+    db_session: Session,
+) -> None:
     """Push critic halts/failures to the labeling queue."""
     halted_by = critic_result.halted_by or "unknown"
     source = halted_by.split(":")[0] if ":" in halted_by else halted_by
@@ -397,7 +415,12 @@ def _push_critic_failure(trace_id, prompt, response, critic_result, db_session):
         response=response,
         critic_output=critic_result.scores,
         db_session=db_session,
+        commit=False,
     )
+
+
+def _record_run(result: PipelineResult) -> None:
+    PIPELINE_RUNS.labels(status=result.status).inc()
 
 
 def _elapsed(start: float) -> float:

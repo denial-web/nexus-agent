@@ -1,6 +1,7 @@
 """Critic registry management endpoints."""
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -41,7 +42,7 @@ def list_critic_nodes(
     node_type: str | None = None,
     active_only: bool = True,
     db: Session = Depends(get_db),
-):
+) -> dict:
     """List registered critic nodes."""
     from app.models.critic_registry import CriticNode
 
@@ -56,7 +57,7 @@ def list_critic_nodes(
 
 
 @router.post("/registry")
-def create_critic_node(req: CriticNodeCreate, db: Session = Depends(get_db)):
+def create_critic_node(req: CriticNodeCreate, db: Session = Depends(get_db)) -> dict:
     """Register a new critic node configuration."""
     from app.models.critic_registry import CriticNode
 
@@ -88,7 +89,7 @@ def create_critic_node(req: CriticNodeCreate, db: Session = Depends(get_db)):
 
 
 @router.patch("/registry/{node_id}")
-def update_critic_node(node_id: str, req: CriticNodeUpdate, db: Session = Depends(get_db)):
+def update_critic_node(node_id: str, req: CriticNodeUpdate, db: Session = Depends(get_db)) -> dict:
     """Update a critic node (hot-swap prompt or LoRA adapter)."""
     from app.models.critic_registry import CriticNode
 
@@ -113,7 +114,7 @@ def update_critic_node(node_id: str, req: CriticNodeUpdate, db: Session = Depend
     return {"node": _node_dict(node)}
 
 
-def _node_dict(node) -> dict:
+def _node_dict(node: Any) -> dict:
     return {
         "id": node.id,
         "name": node.name,

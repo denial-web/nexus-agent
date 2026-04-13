@@ -3,10 +3,12 @@
 import logging
 import time
 from collections import defaultdict
+from typing import Any
 
 from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp
 
 from app.config import settings
 
@@ -18,7 +20,7 @@ _EXEMPT_PATHS = {"/health", "/health/ready", "/docs", "/redoc", "/openapi.json",
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add baseline security headers to every response."""
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
@@ -35,7 +37,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     Disabled when NEXUS_API_KEY is empty (development mode).
     """
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         api_key = settings.NEXUS_API_KEY.strip()
         if not api_key:
             return await call_next(request)
@@ -59,9 +61,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     Only applied to /api/agent/run. Limit configurable via RATE_LIMIT_RPM.
     Disabled when RATE_LIMIT_RPM is 0.
+
+    NOTE: Timestamps are held in-process memory, so this limiter is only
+    accurate for single-worker deployments (uvicorn without --workers).
+    For multi-worker or multi-instance setups, replace with a Redis-backed
+    counter (e.g. redis INCR + EXPIRE sliding window).
     """
 
-    def __init__(self, app, **kwargs):
+    def __init__(self, app: ASGIApp, **kwargs: Any) -> None:
         super().__init__(app, **kwargs)
         self._requests: dict[str, list[float]] = defaultdict(list)
         global _rate_limiter_instance
@@ -70,7 +77,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def reset(self) -> None:
         self._requests.clear()
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         rpm = settings.RATE_LIMIT_RPM
         if rpm <= 0:
             return await call_next(request)

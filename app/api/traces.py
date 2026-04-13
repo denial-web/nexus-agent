@@ -6,13 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.models.trace import Trace
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/traces", tags=["Traces"])
 
 
 @router.post("/{trace_id}/re-evaluate")
-def re_evaluate_trace_endpoint(trace_id: str, db: Session = Depends(get_db)):
+def re_evaluate_trace_endpoint(trace_id: str, db: Session = Depends(get_db)) -> dict:
     """Re-run the current critic tree on a stored trace (does not modify the trace)."""
     from app.services.replay import re_evaluate_trace
 
@@ -29,10 +30,8 @@ def list_traces(
     limit: int = Query(50, le=200),
     offset: int = 0,
     db: Session = Depends(get_db),
-):
+) -> dict:
     """List execution traces with optional filters."""
-    from app.models.trace import Trace
-
     q = db.query(Trace)
     if session_id:
         q = q.filter_by(session_id=session_id)
@@ -49,7 +48,7 @@ def list_traces(
 
 
 @router.get("/session/{session_id}/verify-chain")
-def verify_chain_endpoint(session_id: str, db: Session = Depends(get_db)):
+def verify_chain_endpoint(session_id: str, db: Session = Depends(get_db)) -> dict:
     """Verify tamper-evident hash chain for all traces in a session."""
     from app.services.integrity import verify_chain
 
@@ -62,10 +61,8 @@ def verify_chain_endpoint(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{trace_id}")
-def get_trace(trace_id: str, db: Session = Depends(get_db)):
+def get_trace(trace_id: str, db: Session = Depends(get_db)) -> dict:
     """Get full trace details for replay."""
-    from app.models.trace import Trace
-
     trace = db.query(Trace).filter_by(id=trace_id).first()
     if not trace:
         raise HTTPException(status_code=404, detail="Trace not found")
@@ -76,10 +73,8 @@ def get_trace(trace_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{trace_id}/replay")
-def replay_trace(trace_id: str, db: Session = Depends(get_db)):
+def replay_trace(trace_id: str, db: Session = Depends(get_db)) -> dict:
     """Replay a trace showing each pipeline step in order."""
-    from app.models.trace import Trace
-
     trace = db.query(Trace).filter_by(id=trace_id).first()
     if not trace:
         raise HTTPException(status_code=404, detail="Trace not found")
@@ -147,7 +142,7 @@ def replay_trace(trace_id: str, db: Session = Depends(get_db)):
     }
 
 
-def _trace_summary(trace) -> dict:
+def _trace_summary(trace: Trace) -> dict:
     return {
         "id": trace.id,
         "session_id": trace.session_id,
@@ -159,7 +154,7 @@ def _trace_summary(trace) -> dict:
     }
 
 
-def _trace_detail(trace) -> dict:
+def _trace_detail(trace: Trace) -> dict:
     return {
         "id": trace.id,
         "session_id": trace.session_id,

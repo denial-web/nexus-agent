@@ -57,7 +57,7 @@ class DecisionPath:
         delta = abs(recent[-1] - recent[-2])
         return max(0.0, 1.0 - delta)
 
-    def record_score(self):
+    def record_score(self) -> None:
         self._score_history.append(self.chain_score)
 
 

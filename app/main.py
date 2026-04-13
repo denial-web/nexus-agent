@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -62,7 +64,7 @@ def _run_migrations() -> None:
     logger.info("Tables created via create_all (Alembic not available)")
 
 
-def _seed_default_policies(db) -> None:
+def _seed_default_policies(db: Session) -> None:
     """Seed default governance policies if none exist."""
     from app.models.policy import Policy
 
@@ -118,7 +120,7 @@ def _seed_default_policies(db) -> None:
     logger.info("Seeded %d default governance policies", len(defaults))
 
 
-def _seed_default_critics(db) -> None:
+def _seed_default_critics(db: Session) -> None:
     """Seed default critic_registry rows if the table is empty."""
     from app.models.critic_registry import CriticNode
 
@@ -181,7 +183,7 @@ def _seed_default_critics(db) -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _start_time
     _start_time = time.time()
     _run_migrations()
@@ -258,12 +260,12 @@ if settings.EXPOSE_METRICS:
 
 
 @app.get("/health")
-def health_check():
+def health_check() -> dict:
     return {"status": "ok", "app": settings.PROJECT_NAME, "version": "0.1.0"}
 
 
 @app.get("/health/ready")
-def readiness_check():
+def readiness_check() -> dict:
     db_ok = False
     try:
         db = SessionLocal()

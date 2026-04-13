@@ -19,7 +19,7 @@ class RunRequest(BaseModel):
 
 
 @router.post("/run")
-def run_agent(req: RunRequest, db: Session = Depends(get_db)):
+def run_agent(req: RunRequest, db: Session = Depends(get_db)) -> dict:
     """Execute the full zero-trust agent pipeline on a prompt."""
     from app.agent.pipeline import run
 

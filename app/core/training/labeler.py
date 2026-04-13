@@ -9,6 +9,7 @@ fine-tuning format and fed back into the model improvement loop.
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -23,8 +24,15 @@ def push_failure(
     response: str | None,
     critic_output: dict,
     db_session: Session | None = None,
+    *,
+    commit: bool = True,
 ) -> dict:
-    """Push a failure trace to the labeling queue."""
+    """Push a failure trace to the labeling queue.
+
+    When *commit* is False the row is flushed but not committed, allowing the
+    caller to batch it with other writes (e.g. the Trace insert) in a single
+    atomic transaction.
+    """
     from app.models.labeling_queue import LabelingItem
 
     item = LabelingItem(
@@ -40,8 +48,10 @@ def push_failure(
 
     if db_session:
         db_session.add(item)
-        db_session.commit()
-        db_session.refresh(item)
+        if commit:
+            db_session.commit()
+        else:
+            db_session.flush()
         logger.info(
             "Pushed failure to labeling queue: %s (source=%s, type=%s)",
             item.id,
@@ -186,7 +196,7 @@ def export_for_training(
     return training_data
 
 
-def _to_dict(item) -> dict:
+def _to_dict(item: Any) -> dict:
     return {
         "id": item.id,
         "trace_id": item.trace_id,

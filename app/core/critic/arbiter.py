@@ -58,15 +58,15 @@ class ArbiterResult:
 class Arbiter:
     """Central governor of the critic tree."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._nodes: dict[str, CriticNodeProtocol] = {}
         self._rollback_count = 0
 
-    def register_node(self, node: CriticNodeProtocol):
+    def register_node(self, node: CriticNodeProtocol) -> None:
         self._nodes[node.name] = node
         logger.info("Registered critic node: %s (can_halt=%s)", node.name, node.can_halt)
 
-    def unregister_node(self, name: str):
+    def unregister_node(self, name: str) -> None:
         self._nodes.pop(name, None)
 
     @property
@@ -188,7 +188,7 @@ class Arbiter:
         final_context = {**context, "response": accumulated}
         return self.evaluate(final_context)
 
-    def reset(self):
+    def reset(self) -> None:
         self._rollback_count = 0
 
     @classmethod

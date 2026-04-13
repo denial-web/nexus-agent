@@ -54,7 +54,7 @@ def get_labeling_queue(
     status: str = "pending",
     failure_type: str | None = None,
     db: Session = Depends(get_db),
-):
+) -> dict:
     """View the labeling queue for training flywheel."""
     from app.core.training.labeler import get_queue
 
@@ -63,7 +63,7 @@ def get_labeling_queue(
 
 
 @router.post("/queue/{item_id}/label")
-def label_queue_item(item_id: str, req: LabelRequest, db: Session = Depends(get_db)):
+def label_queue_item(item_id: str, req: LabelRequest, db: Session = Depends(get_db)) -> dict:
     """Apply a human label to a queued failure trace."""
     from app.core.training.labeler import label_item
 
@@ -81,7 +81,7 @@ def label_queue_item(item_id: str, req: LabelRequest, db: Session = Depends(get_
 
 
 @router.post("/export")
-def export_and_send(req: ExportRequest, db: Session = Depends(get_db)):
+def export_and_send(req: ExportRequest, db: Session = Depends(get_db)) -> dict:
     """Export labeled items and optionally send to Doctrine Lab."""
     from app.core.training.labeler import export_for_training
     from app.models.labeling_queue import LabelingItem
@@ -137,7 +137,7 @@ def export_and_send(req: ExportRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/eval")
-def submit_eval(req: EvalReportRequest, db: Session = Depends(get_db)):
+def submit_eval(req: EvalReportRequest, db: Session = Depends(get_db)) -> dict:
     """Submit an evaluation report to Doctrine Lab."""
     from app.services.doctrine_bridge import is_configured, submit_eval_report
 
@@ -159,7 +159,7 @@ def submit_eval(req: EvalReportRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/finetune")
-def trigger_finetune_endpoint(req: FinetuneRequest):
+def trigger_finetune_endpoint(req: FinetuneRequest) -> dict:
     """Trigger a fine-tuning job via Doctrine Lab."""
     from app.services.doctrine_bridge import is_configured, trigger_finetune
 
@@ -180,7 +180,7 @@ def trigger_finetune_endpoint(req: FinetuneRequest):
 
 
 @router.get("/finetune/status/{job_id}")
-def finetune_job_status(job_id: str):
+def finetune_job_status(job_id: str) -> dict:
     """Poll Doctrine Lab for fine-tune job status."""
     from app.services.doctrine_bridge import get_finetune_job_status, is_configured
 
@@ -194,7 +194,7 @@ def finetune_job_status(job_id: str):
 
 
 @router.post("/promote-adapter")
-def promote_adapter_endpoint(req: PromoteAdapterRequest, db: Session = Depends(get_db)):
+def promote_adapter_endpoint(req: PromoteAdapterRequest, db: Session = Depends(get_db)) -> dict:
     """
     After a fine-tune job completes, promote the resulting LoRA path to a critic node.
 
@@ -237,7 +237,7 @@ def promote_adapter_endpoint(req: PromoteAdapterRequest, db: Session = Depends(g
 
 
 @router.post("/calibration/persist")
-def persist_calibration(db: Session = Depends(get_db)):
+def persist_calibration(db: Session = Depends(get_db)) -> dict:
     """Write the current in-memory ECE metrics to calibration_snapshots."""
     from app.core.training.calibration import persist_calibration_snapshot
 
@@ -248,7 +248,7 @@ def persist_calibration(db: Session = Depends(get_db)):
 
 
 @router.get("/calibration/snapshots")
-def list_calibration_snapshots(limit: int = 20, db: Session = Depends(get_db)):
+def list_calibration_snapshots(limit: int = 20, db: Session = Depends(get_db)) -> dict:
     """Recent persisted calibration snapshots."""
     from app.models.training_meta import CalibrationSnapshot
 
@@ -270,7 +270,7 @@ def list_calibration_snapshots(limit: int = 20, db: Session = Depends(get_db)):
 
 
 @router.get("/calibration")
-def get_calibration(node_name: str | None = None):
+def get_calibration(node_name: str | None = None) -> dict:
     """Get ECE calibration report for the critic tree."""
     from app.core.training.calibration import get_ece_tracker
 
@@ -286,7 +286,7 @@ def get_calibration(node_name: str | None = None):
 
 
 @router.post("/lora/compare")
-def compare_lora_adapter(req: LoraCompareRequest, db: Session = Depends(get_db)):
+def compare_lora_adapter(req: LoraCompareRequest, db: Session = Depends(get_db)) -> dict:
     """
     Compare critic performance before and after swapping a LoRA adapter.
 

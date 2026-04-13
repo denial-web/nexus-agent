@@ -14,6 +14,7 @@ Nexus Agent is a **Zero-Trust & Self-Evolving AI Agent System**. It wraps LLM ca
 - **Database**: SQLite (dev), PostgreSQL (prod)
 - **AI providers**: Google Gemini (`google-genai`), OpenAI (`openai`), DeepSeek (OpenAI-compatible) — all in `requirements.txt`
 - **Crypto**: `cryptography` (for ECDSA capability tokens)
+- **Observability**: Prometheus metrics (`prometheus-client`), structured logging
 - **Testing**: pytest + httpx TestClient
 
 ## Project Structure
@@ -72,7 +73,7 @@ app/
 - **Pydantic v2** — use `model_config = ConfigDict(...)`, not `class Config`
 - **SQLAlchemy 2.0** style — `Column()`, `declarative_base()`
 - **Logging** — `logger = logging.getLogger(__name__)`, never `print()`
-- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 243+ tests across 17 test files.
+- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 252 tests across 18 test files.
 - **Alembic** — `render_as_batch=True` for SQLite, migrations auto-generated
 
 ## Pipeline Flow (app/agent/pipeline.py)
@@ -94,7 +95,7 @@ Prompt
 
 ## Current State — All Phases Complete
 
-**243+ passing tests** across 17 test files.
+**252 passing tests** across 18 test files.
 
 **Completed phases:**
 - **Phase 1**: Foundation — pipeline, models, immune scanner, arbiter, governance, tests

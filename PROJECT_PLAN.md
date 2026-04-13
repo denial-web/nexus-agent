@@ -272,7 +272,7 @@ Failure traces awaiting human review for the training flywheel.
 
 ---
 
-## Testing — 243+ tests across 17 files
+## Testing — 252 tests across 18 files
 
 - All tests in `tests/` directory
 - Fixtures in `tests/conftest.py` (test DB, session, TestClient)

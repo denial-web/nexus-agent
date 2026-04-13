@@ -31,7 +31,7 @@ class ApprovalVoteRequest(BaseModel):
 
 
 @router.get("/policies")
-def list_policies(active_only: bool = True, db: Session = Depends(get_db)):
+def list_policies(active_only: bool = True, db: Session = Depends(get_db)) -> dict:
     """List governance policies."""
     from app.models.policy import Policy
 
@@ -58,7 +58,7 @@ def list_policies(active_only: bool = True, db: Session = Depends(get_db)):
 
 
 @router.post("/policies")
-def create_policy(req: PolicyCreate, db: Session = Depends(get_db)):
+def create_policy(req: PolicyCreate, db: Session = Depends(get_db)) -> dict:
     """Create a new governance policy."""
     from app.models.policy import Policy
 
@@ -79,7 +79,7 @@ def create_policy(req: PolicyCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/approvals")
-def list_pending_approvals(status: str = "pending", db: Session = Depends(get_db)):
+def list_pending_approvals(status: str = "pending", db: Session = Depends(get_db)) -> dict:
     """List approval requests."""
     from app.models.approval_log import ApprovalRequest
 
@@ -105,7 +105,7 @@ def list_pending_approvals(status: str = "pending", db: Session = Depends(get_db
 
 
 @router.post("/approve/{request_id}")
-def submit_vote(request_id: str, vote: ApprovalVoteRequest, db: Session = Depends(get_db)):
+def submit_vote(request_id: str, vote: ApprovalVoteRequest, db: Session = Depends(get_db)) -> dict:
     """Submit an approval or denial vote for a pending action."""
     from datetime import datetime
 
@@ -192,7 +192,7 @@ def get_labeling_queue(
     status: str = "pending",
     failure_type: str | None = None,
     db: Session = Depends(get_db),
-):
+) -> dict:
     """View the labeling queue for training flywheel."""
     from app.core.training.labeler import get_queue
 

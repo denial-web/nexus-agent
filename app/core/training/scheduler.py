@@ -24,6 +24,11 @@ def _run_export_cycle() -> dict:
 
     db = SessionLocal()
     try:
+        from app.metrics import LABELING_QUEUE_DEPTH
+
+        pending_count = db.query(LabelingItem).filter_by(status="pending").count()
+        LABELING_QUEUE_DEPTH.set(pending_count)
+
         outbox_stats = process_outbox_retries(db)
 
         pending = db.query(LabelingItem).filter_by(status="labeled", label="correct_flag").limit(100).all()
