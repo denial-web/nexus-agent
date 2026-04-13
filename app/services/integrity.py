@@ -1,4 +1,5 @@
 """Tamper-evident trace hash chain verification."""
+
 import hashlib
 import logging
 from typing import Any
@@ -43,12 +44,14 @@ def verify_chain(session_id: str, db_session: Session) -> list[dict[str, Any]]:
     for i, t in enumerate(rows):
         expected_prev = prev_trace_hash if i > 0 else "genesis"
         if t.prev_hash != expected_prev:
-            problems.append({
-                "trace_id": t.id,
-                "issue": "prev_hash_mismatch",
-                "expected_prev": expected_prev,
-                "got_prev": t.prev_hash,
-            })
+            problems.append(
+                {
+                    "trace_id": t.id,
+                    "issue": "prev_hash_mismatch",
+                    "expected_prev": expected_prev,
+                    "got_prev": t.prev_hash,
+                }
+            )
 
         expected_self = compute_trace_hash(
             t.id,
@@ -58,12 +61,14 @@ def verify_chain(session_id: str, db_session: Session) -> list[dict[str, Any]]:
             t.status,
         )
         if t.trace_hash != expected_self:
-            problems.append({
-                "trace_id": t.id,
-                "issue": "trace_hash_mismatch",
-                "expected": expected_self,
-                "got": t.trace_hash,
-            })
+            problems.append(
+                {
+                    "trace_id": t.id,
+                    "issue": "trace_hash_mismatch",
+                    "expected": expected_self,
+                    "got": t.trace_hash,
+                }
+            )
 
         prev_trace_hash = t.trace_hash
 

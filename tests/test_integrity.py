@@ -1,4 +1,5 @@
 """Tests for trace hash chain verification."""
+
 from app.agent.pipeline import run
 from app.models.trace import Trace
 from app.services.integrity import compute_trace_hash, verify_chain

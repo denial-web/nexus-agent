@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime, timezone
+import secrets
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -7,11 +8,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from app.config import settings
+from app.core.training.calibration import get_ece_tracker
 from app.db import get_db
 from app.models.approval_log import ApprovalRequest, ApprovalVote
 from app.models.labeling_queue import LabelingItem
 from app.models.trace import Trace
-from app.core.training.calibration import get_ece_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +23,26 @@ _template_dir = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_template_dir))
 
 
+def _issue_csrf(request: Request) -> str | None:
+    if not settings.ENFORCE_DASHBOARD_CSRF:
+        return None
+    token = secrets.token_urlsafe(32)
+    request.session["csrf_token"] = token
+    return token
+
+
+def _csrf_valid(request: Request, form_token: str | None) -> bool:
+    if not settings.ENFORCE_DASHBOARD_CSRF:
+        return True
+    return bool(form_token) and form_token == request.session.get("csrf_token")
+
+
 @router.get("", response_class=HTMLResponse)
 def trace_list(request: Request, db: Session = Depends(get_db)):
     traces = db.query(Trace).order_by(Trace.created_at.desc()).limit(100).all()
     total = db.query(Trace).count()
     completed = db.query(Trace).filter(Trace.status == "completed").count()
-    blocked = db.query(Trace).filter(Trace.status.in_(["blocked", "halted"])).count()
+    blocked = db.query(Trace).filter(Trace.status.in_(["blocked", "halted", "error"])).count()
 
     return templates.TemplateResponse(
         request,
@@ -56,16 +72,12 @@ def trace_detail(trace_id: str, request: Request, db: Session = Depends(get_db))
 
 @router.get("/labeling", response_class=HTMLResponse)
 def labeling_queue(request: Request, db: Session = Depends(get_db)):
-    items = (
-        db.query(LabelingItem)
-        .order_by(LabelingItem.created_at.desc())
-        .limit(100)
-        .all()
-    )
+    items = db.query(LabelingItem).order_by(LabelingItem.created_at.desc()).limit(100).all()
     pending = db.query(LabelingItem).filter(LabelingItem.status == "pending").count()
     labeled = db.query(LabelingItem).filter(LabelingItem.status == "labeled").count()
     exported = db.query(LabelingItem).filter(LabelingItem.status == "exported").count()
 
+    csrf_token = _issue_csrf(request)
     return templates.TemplateResponse(
         request,
         "labeling.html",
@@ -75,21 +87,27 @@ def labeling_queue(request: Request, db: Session = Depends(get_db)):
             "pending": pending,
             "labeled": labeled,
             "exported": exported,
+            "csrf_token": csrf_token,
         },
     )
 
 
 @router.post("/labeling/{item_id}/label")
 def apply_label(
+    request: Request,
     item_id: str,
     label: str = Form(...),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
+    if not _csrf_valid(request, csrf_token):
+        return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
+
     item = db.query(LabelingItem).filter(LabelingItem.id == item_id).first()
     if item and item.status == "pending":
         item.label = label
         item.status = "labeled"
-        item.labeled_at = datetime.now(timezone.utc)
+        item.labeled_at = datetime.now(UTC)
         item.reviewer_id = "dashboard-user"
         db.commit()
         logger.info("Labeled item %s as %s", item_id, label)
@@ -99,16 +117,12 @@ def apply_label(
 
 @router.get("/approvals", response_class=HTMLResponse)
 def approval_list(request: Request, db: Session = Depends(get_db)):
-    requests_list = (
-        db.query(ApprovalRequest)
-        .order_by(ApprovalRequest.created_at.desc())
-        .limit(100)
-        .all()
-    )
+    requests_list = db.query(ApprovalRequest).order_by(ApprovalRequest.created_at.desc()).limit(100).all()
     pending = db.query(ApprovalRequest).filter(ApprovalRequest.status == "pending").count()
     approved = db.query(ApprovalRequest).filter(ApprovalRequest.status == "approved").count()
     denied = db.query(ApprovalRequest).filter(ApprovalRequest.status == "denied").count()
 
+    csrf_token = _issue_csrf(request)
     return templates.TemplateResponse(
         request,
         "approvals.html",
@@ -118,17 +132,23 @@ def approval_list(request: Request, db: Session = Depends(get_db)):
             "pending": pending,
             "approved": approved,
             "denied": denied,
+            "csrf_token": csrf_token,
         },
     )
 
 
 @router.post("/approvals/{request_id}/vote")
 def cast_vote(
+    request: Request,
     request_id: str,
     decision: str = Form(...),
     approver_id: str = Form("dashboard-user"),
+    csrf_token: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
+    if not _csrf_valid(request, csrf_token):
+        return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
+
     approval = db.query(ApprovalRequest).filter(ApprovalRequest.id == request_id).first()
     if not approval or approval.status != "pending":
         return RedirectResponse(url="/dashboard/approvals", status_code=303)
@@ -148,10 +168,10 @@ def cast_vote(
         approval.received_approvals = str(current)
         if current >= required:
             approval.status = "approved"
-            approval.resolved_at = datetime.now(timezone.utc)
+            approval.resolved_at = datetime.now(UTC)
     elif decision == "deny":
         approval.status = "denied"
-        approval.resolved_at = datetime.now(timezone.utc)
+        approval.resolved_at = datetime.now(UTC)
 
     db.commit()
     logger.info("Vote on %s: %s by %s", request_id, decision, approver_id)
@@ -167,14 +187,16 @@ def calibration_dashboard(request: Request):
     bins = []
     for b in report.bins:
         if b["count"] > 0:
-            bins.append({
-                "low": b["bin_lo"],
-                "high": b["bin_hi"],
-                "count": b["count"],
-                "avg_confidence": b["avg_confidence"],
-                "accuracy": b["avg_accuracy"],
-                "gap": b["avg_confidence"] - b["avg_accuracy"],
-            })
+            bins.append(
+                {
+                    "low": b["bin_lo"],
+                    "high": b["bin_hi"],
+                    "count": b["count"],
+                    "avg_confidence": b["avg_confidence"],
+                    "accuracy": b["avg_accuracy"],
+                    "gap": b["avg_confidence"] - b["avg_accuracy"],
+                }
+            )
 
     total_conf = sum(b["avg_confidence"] * b["count"] for b in report.bins if b["count"] > 0)
     total_acc = sum(b["avg_accuracy"] * b["count"] for b in report.bins if b["count"] > 0)

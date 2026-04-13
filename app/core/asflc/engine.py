@@ -8,6 +8,7 @@ Forces the LLM to map out decision trees with asymmetric risk treatment:
 The engine loops until scores converge, then outputs the highest-confidence
 path. This prevents the model from choosing adversarial "trap" decisions.
 """
+
 import logging
 from dataclasses import dataclass, field
 
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EventNode:
     """A single node in a decision chain."""
+
     description: str
     probability: float
     impact: float
@@ -36,6 +38,7 @@ class EventNode:
 @dataclass
 class DecisionPath:
     """A chain of events representing one possible decision path."""
+
     name: str
     events: list[EventNode] = field(default_factory=list)
     _score_history: list[float] = field(default_factory=list)
@@ -61,6 +64,7 @@ class DecisionPath:
 @dataclass
 class ASFLCResult:
     """Result of the decision engine evaluation."""
+
     chosen_path: str
     chosen_score: float
     confidence: float
@@ -86,9 +90,7 @@ def evaluate_paths(paths: list[DecisionPath]) -> ASFLCResult:
             path.record_score()
 
         if loop >= 2:
-            all_stable = all(
-                path.confidence >= (1.0 - threshold) for path in paths
-            )
+            all_stable = all(path.confidence >= (1.0 - threshold) for path in paths)
             if all_stable:
                 converged = True
                 break

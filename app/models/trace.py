@@ -4,10 +4,11 @@ Execution traces — the append-only audit log for every agent run.
 Each trace captures the full lifecycle: input scan → decision → critic
 evaluation → governance check → execution → output scan.
 """
-import uuid
-from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Float, Index, Integer, JSON, String, Text
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, Column, DateTime, Float, Index, Integer, String, Text
 
 from app.db import Base
 
@@ -55,7 +56,7 @@ class Trace(Base):
     token_count = Column(Integer, nullable=True)
     error = Column(Text, nullable=True)
     status = Column(String(20), nullable=False, default="pending")
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     # SHA-256 hash chain — each trace links to the previous
     prev_hash = Column(String(64), nullable=True)

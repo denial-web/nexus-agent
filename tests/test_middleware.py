@@ -1,9 +1,10 @@
 """Tests for API authentication and rate limiting middleware."""
-import pytest
+
 from unittest.mock import patch
 
-from app.config import settings
 import app.middleware as mw_module
+import pytest
+from app.config import settings
 
 
 class TestAuthMiddleware:
@@ -70,7 +71,7 @@ class TestRateLimitMiddleware:
         monkeypatch.setattr(settings, "RATE_LIMIT_RPM", 3)
         for i in range(3):
             resp = client.post("/api/agent/run", json={"prompt": f"test {i}"})
-            assert resp.status_code == 200, f"Request {i+1} should succeed"
+            assert resp.status_code == 200, f"Request {i + 1} should succeed"
 
         resp = client.post("/api/agent/run", json={"prompt": "over limit"})
         assert resp.status_code == 429

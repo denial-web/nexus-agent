@@ -5,10 +5,11 @@ When the critic tree halts a generation or detects flawed reasoning,
 the full trace + critic JSONs are pushed here. Reviewed items feed
 into the training flywheel via evidential loss.
 """
-import uuid
-from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Index, JSON, String, Text
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, Column, DateTime, Index, String, Text
 
 from app.db import Base
 
@@ -37,7 +38,7 @@ class LabelingItem(Base):
     training_batch_id = Column(String, nullable=True)
     exported_at = Column(DateTime, nullable=True)
 
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     labeled_at = Column(DateTime, nullable=True)
 
     __table_args__ = (

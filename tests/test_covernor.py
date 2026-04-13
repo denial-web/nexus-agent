@@ -1,6 +1,6 @@
 """Tests for the Covernor policy engine and token manager."""
-import pytest
 
+import pytest
 from app.core.covernor.policy_engine import evaluate_action
 from app.core.covernor.token_manager import (
     get_public_key_pem,
@@ -58,6 +58,7 @@ class TestTokenManager:
     def test_expired_token(self):
         token = issue_token(trace_id="t3", action_type="respond", ttl_seconds=0)
         import time
+
         time.sleep(0.01)
 
         valid, reason = verify_and_consume(token.token_id)
@@ -106,6 +107,7 @@ class TestTokenManager:
         p.write_bytes(pem)
 
         from unittest.mock import patch
+
         from app.config import settings
 
         with patch.object(settings, "ECDSA_PRIVATE_KEY_PATH", str(p)):

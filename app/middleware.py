@@ -1,4 +1,5 @@
 """Security middleware: API key authentication and rate limiting."""
+
 import logging
 import time
 from collections import defaultdict
@@ -11,7 +12,19 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_EXEMPT_PATHS = {"/health", "/health/ready", "/docs", "/redoc", "/openapi.json"}
+_EXEMPT_PATHS = {"/health", "/health/ready", "/docs", "/redoc", "/openapi.json", "/metrics"}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add baseline security headers to every response."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        return response
+
 
 _rate_limiter_instance: "RateLimitMiddleware | None" = None
 
@@ -33,7 +46,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         provided = request.headers.get("X-API-Key", "")
         if provided != api_key:
-            logger.warning("Auth rejected: invalid API key from %s", request.client.host if request.client else "unknown")
+            logger.warning(
+                "Auth rejected: invalid API key from %s", request.client.host if request.client else "unknown"
+            )
             return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
 
         return await call_next(request)

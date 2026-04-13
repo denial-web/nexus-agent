@@ -4,10 +4,11 @@ Governance policies — the Covernor default-deny rule engine.
 Each policy defines what actions are allowed, what requires approval,
 and what is blocked outright. Unknown actions are denied by default.
 """
-import uuid
-from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Index, JSON, String, Text
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, Index, String, Text
 
 from app.db import Base
 
@@ -35,8 +36,8 @@ class Policy(Base):
 
     priority = Column(String, nullable=False, default="100")
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     __table_args__ = (
         Index("ix_policy_active", "is_active"),

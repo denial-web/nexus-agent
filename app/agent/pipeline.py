@@ -6,21 +6,21 @@ Critic Evaluation → Governance Check → Output Scan → Response.
 
 Each step writes to the trace for full auditability.
 """
+
 import hashlib
 import logging
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.core.immune.scanner import scan_input, scan_output, harden_prompt, Verdict
-from app.core.critic.arbiter import Arbiter
 from app.core.covernor.policy_engine import evaluate_action
+from app.core.critic.arbiter import Arbiter
+from app.core.immune.scanner import Verdict, harden_prompt, scan_input, scan_output
 from app.core.llm.provider import generate
 from app.core.training.calibration import record_critic_calibration
 from app.core.training.labeler import push_failure
@@ -28,7 +28,7 @@ from app.core.training.labeler import push_failure
 logger = logging.getLogger(__name__)
 
 _ARBITER_TTL_SECONDS = 60
-_arbiter_cache: Optional[Arbiter] = None
+_arbiter_cache: Arbiter | None = None
 _arbiter_cache_time: float = 0.0
 _arbiter_lock = threading.Lock()
 
@@ -37,18 +37,18 @@ _arbiter_lock = threading.Lock()
 class PipelineResult:
     trace_id: str
     session_id: str
-    status: str  # "completed", "blocked", "halted", "pending_approval"
-    response: Optional[str] = None
+    status: str  # "completed", "blocked", "halted", "pending_approval", "error"
+    response: str | None = None
     immune_input: dict = field(default_factory=dict)
     immune_output: dict = field(default_factory=dict)
     critic_result: dict = field(default_factory=dict)
     governance: dict = field(default_factory=dict)
     asflc: dict = field(default_factory=dict)
     latency_ms: float = 0.0
-    error: Optional[str] = None
-    model_id_used: Optional[str] = None
-    token_count: Optional[int] = None
-    approval_request_id: Optional[str] = None
+    error: str | None = None
+    model_id_used: str | None = None
+    token_count: int | None = None
+    approval_request_id: str | None = None
 
 
 def invalidate_arbiter_cache() -> None:
@@ -59,7 +59,7 @@ def invalidate_arbiter_cache() -> None:
         _arbiter_cache_time = 0.0
 
 
-def get_arbiter(db_session: Optional[Session] = None) -> Arbiter:
+def get_arbiter(db_session: Session | None = None) -> Arbiter:
     """Return a TTL-cached Arbiter loaded from the DB, or built-in heuristics."""
     global _arbiter_cache, _arbiter_cache_time
 
@@ -86,9 +86,9 @@ def get_arbiter(db_session: Optional[Session] = None) -> Arbiter:
 
 def run(
     prompt: str,
-    session_id: Optional[str] = None,
-    model_id: Optional[str] = None,
-    db_session: Optional[Session] = None,
+    session_id: str | None = None,
+    model_id: str | None = None,
+    db_session: Session | None = None,
 ) -> PipelineResult:
     """Execute the full agent pipeline."""
     start = time.time()
@@ -109,6 +109,16 @@ def run(
         result.status = "blocked"
         result.error = "Input blocked by immune scanner"
         result.latency_ms = _elapsed(start)
+        if db_session:
+            _push_pipeline_failure(
+                trace_id=trace_id,
+                source_node="immune",
+                failure_type="injection",
+                prompt=prompt,
+                response=None,
+                detail={"stage": "input_scan", "immune_input": result.immune_input},
+                db_session=db_session,
+            )
         _persist_trace(result, prompt, db_session)
         return result
 
@@ -120,7 +130,7 @@ def run(
             result.immune_input["removed_fragments"] = removed
 
     # ── Step 2: A-S-FLC decision analysis ─────────────────
-    system_hint: Optional[str] = None
+    system_hint: str | None = None
     try:
         from app.core.asflc.analyzer import analyze as asflc_analyze
 
@@ -141,18 +151,37 @@ def run(
     # ── Step 3: LLM generation + Step 4: Critic evaluation ──
     arbiter = get_arbiter(db_session)
 
-    llm_result = generate(prompt, model_id=model_id, system_prompt=system_hint)
-    response = llm_result.text
-    result.model_id_used = llm_result.model_id
-    result.token_count = llm_result.token_count
-
     critic_ctx = {
         "prompt": prompt,
-        "model_id": result.model_id_used or model_id or "mock",
+        "model_id": model_id or "mock",
         "trace_id": trace_id,
     }
 
-    critic_result = arbiter.evaluate({**critic_ctx, "response": response})
+    try:
+        llm_result = generate(prompt, model_id=model_id, system_prompt=system_hint)
+        response = llm_result.text
+        result.model_id_used = llm_result.model_id
+        result.token_count = llm_result.token_count
+        critic_ctx["model_id"] = result.model_id_used or model_id or "mock"
+
+        critic_result = arbiter.evaluate({**critic_ctx, "response": response})
+    except Exception as exc:
+        logger.exception("Pipeline LLM or critic evaluation failed: trace_id=%s", trace_id)
+        result.status = "error"
+        result.error = str(exc) or type(exc).__name__
+        result.latency_ms = _elapsed(start)
+        if db_session:
+            _push_pipeline_failure(
+                trace_id=trace_id,
+                source_node="pipeline",
+                failure_type="pipeline_error",
+                prompt=prompt,
+                response=None,
+                detail={"stage": "llm_or_critic", "error": result.error},
+                db_session=db_session,
+            )
+        _persist_trace(result, prompt, db_session)
+        return result
 
     result.critic_result = {
         "verdict": critic_result.verdict,
@@ -195,6 +224,16 @@ def run(
         result.status = "blocked"
         result.error = f"Governance denied: {gov_decision.reason}"
         result.latency_ms = _elapsed(start)
+        if db_session:
+            _push_pipeline_failure(
+                trace_id=trace_id,
+                source_node="covernor",
+                failure_type="governance",
+                prompt=prompt,
+                response=response,
+                detail={"stage": "governance", "governance": result.governance, "reason": gov_decision.reason},
+                db_session=db_session,
+            )
         _persist_trace(result, prompt, db_session)
         return result
 
@@ -216,7 +255,7 @@ def run(
                 received_approvals="0",
                 status="pending",
                 token_scope={"trace_id": trace_id, "action": "respond"},
-                expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+                expires_at=datetime.now(UTC) + timedelta(hours=24),
             )
             db_session.add(approval)
             db_session.flush()
@@ -237,6 +276,16 @@ def run(
         result.status = "blocked"
         result.error = "Output blocked by immune scanner"
         result.latency_ms = _elapsed(start)
+        if db_session:
+            _push_pipeline_failure(
+                trace_id=trace_id,
+                source_node="immune",
+                failure_type="safety",
+                prompt=prompt,
+                response=response,
+                detail={"stage": "output_scan", "immune_output": result.immune_output},
+                db_session=db_session,
+            )
         _persist_trace(result, prompt, db_session)
         return result
 
@@ -248,7 +297,7 @@ def run(
     return result
 
 
-def _persist_trace(result: PipelineResult, prompt: str, db_session: Optional[Session]):
+def _persist_trace(result: PipelineResult, prompt: str, db_session: Session | None):
     """Write trace to the audit log."""
     if not db_session:
         return
@@ -257,9 +306,7 @@ def _persist_trace(result: PipelineResult, prompt: str, db_session: Optional[Ses
     from app.services.integrity import compute_trace_hash
 
     prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
-    response_hash = (
-        hashlib.sha256(result.response.encode()).hexdigest() if result.response else None
-    )
+    response_hash = hashlib.sha256(result.response.encode()).hexdigest() if result.response else None
 
     prev = (
         db_session.query(Trace)
@@ -309,8 +356,32 @@ def _persist_trace(result: PipelineResult, prompt: str, db_session: Optional[Ses
         trace_hash=trace_hash,
     )
 
-    db_session.add(trace)
-    db_session.commit()
+    try:
+        db_session.add(trace)
+        db_session.commit()
+    except Exception:
+        logger.exception("Failed to persist trace %s", result.trace_id)
+        raise
+
+
+def _push_pipeline_failure(
+    trace_id: str,
+    source_node: str,
+    failure_type: str,
+    prompt: str,
+    response: str | None,
+    detail: dict,
+    db_session: Session,
+) -> None:
+    push_failure(
+        trace_id=trace_id,
+        source_node=source_node,
+        failure_type=failure_type,
+        prompt=prompt,
+        response=response,
+        critic_output=detail,
+        db_session=db_session,
+    )
 
 
 def _push_critic_failure(trace_id, prompt, response, critic_result, db_session):

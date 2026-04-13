@@ -4,10 +4,11 @@ Approval log — K-of-N dual human approval records for the Covernor platform.
 High-risk actions require multiple human approvers before an ECDSA
 capability token is minted and execution proceeds.
 """
-import uuid
-from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Index, JSON, String, Text
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, Column, DateTime, Index, String, Text
 
 from app.db import Base
 
@@ -32,7 +33,7 @@ class ApprovalRequest(Base):
 
     expires_at = Column(DateTime, nullable=True)
     resolved_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
         Index("ix_approval_status", "status"),
@@ -49,4 +50,4 @@ class ApprovalVote(Base):
     decision = Column(String(10), nullable=False)  # "approve", "deny"
     reason = Column(Text, nullable=True)
     signature = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))

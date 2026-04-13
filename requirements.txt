@@ -7,6 +7,7 @@ pydantic-settings>=2.6.0
 python-dotenv>=1.0.1
 jinja2>=3.1.0
 python-multipart>=0.0.7
+itsdangerous>=2.2.0
 
 # AI / LLM providers
 google-genai>=1.0.0
@@ -15,7 +16,10 @@ openai>=1.50.0
 # Crypto (ECDSA capability tokens)
 cryptography>=44.0.0
 
-# Testing
+# Observability
+prometheus-client>=0.21.0
+
+# Testing (also listed in requirements-dev.txt for CI)
 pytest>=8.3.0
 httpx>=0.27.0
 

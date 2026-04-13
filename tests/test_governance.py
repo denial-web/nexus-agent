@@ -1,21 +1,25 @@
 """Tests for governance approval flow and K-of-N."""
-import pytest
 
+from datetime import UTC
+
+import pytest
 from app.models.approval_log import ApprovalRequest
 from app.models.policy import Policy
 
 
 @pytest.fixture
 def require_approval_policy(db_session):
-    db_session.add(Policy(
-        name="gov-require-approval",
-        action_pattern="respond",
-        resource_pattern="chat",
-        decision="require_approval",
-        risk_level="high",
-        required_approvals="2",
-        priority="01",
-    ))
+    db_session.add(
+        Policy(
+            name="gov-require-approval",
+            action_pattern="respond",
+            resource_pattern="chat",
+            decision="require_approval",
+            risk_level="high",
+            required_approvals="2",
+            priority="01",
+        )
+    )
     db_session.commit()
     yield
     p = db_session.query(Policy).filter_by(name="gov-require-approval").first()
@@ -99,7 +103,7 @@ def test_invalid_decision_rejected(client, require_approval_policy):
 
 
 def test_expired_request_rejected(client, db_session, require_approval_policy):
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
 
     from app.models.approval_log import ApprovalRequest
 
@@ -107,7 +111,7 @@ def test_expired_request_rejected(client, db_session, require_approval_policy):
     req_id = run_resp.json()["approval_request_id"]
 
     ar = db_session.query(ApprovalRequest).filter_by(id=req_id).first()
-    ar.expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    ar.expires_at = datetime.now(UTC) - timedelta(hours=1)
     db_session.commit()
 
     r = client.post(
@@ -133,15 +137,17 @@ def test_deny_vote_immediately_denies(client, require_approval_policy):
 def test_approval_quorum_floor(client, db_session, monkeypatch):
     monkeypatch.setattr("app.config.settings.APPROVAL_QUORUM", 2)
 
-    db_session.add(Policy(
-        name="gov-quorum-floor",
-        action_pattern="respond",
-        resource_pattern="chat",
-        decision="require_approval",
-        risk_level="high",
-        required_approvals="1",
-        priority="01",
-    ))
+    db_session.add(
+        Policy(
+            name="gov-quorum-floor",
+            action_pattern="respond",
+            resource_pattern="chat",
+            decision="require_approval",
+            risk_level="high",
+            required_approvals="1",
+            priority="01",
+        )
+    )
     db_session.commit()
 
     try:

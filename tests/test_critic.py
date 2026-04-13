@@ -1,22 +1,25 @@
 """Tests for the Arbiter and critic leaf nodes."""
+
 import json
 from unittest.mock import MagicMock, patch
 
 from app.core.critic.arbiter import Arbiter
 from app.core.critic.nodes import (
-    ReasoningCritic,
     InjectionCritic,
-    SafetyCritic,
-    QualityCritic,
-    LLMReasoningCritic,
     LLMInjectionCritic,
+    LLMReasoningCritic,
+    QualityCritic,
+    ReasoningCritic,
+    SafetyCritic,
 )
 
 
 class TestReasoningCritic:
     def test_valid_json_passes(self):
         critic = ReasoningCritic()
-        result = critic.evaluate({"response": json.dumps({"a": 1, "b": 2, "c": 3, "extra": "text for length padding" * 5})})
+        result = critic.evaluate(
+            {"response": json.dumps({"a": 1, "b": 2, "c": 3, "extra": "text for length padding" * 5})}
+        )
         assert result.verdict == "pass"
         assert result.score >= 0.7
 
@@ -41,10 +44,12 @@ class TestInjectionCritic:
 
     def test_system_prompt_leak_fails(self):
         critic = InjectionCritic()
-        result = critic.evaluate({
-            "response": "My original instructions say I should help with coding. "
-                        "As an AI language model, I cannot do that."
-        })
+        result = critic.evaluate(
+            {
+                "response": "My original instructions say I should help with coding. "
+                "As an AI language model, I cannot do that."
+            }
+        )
         assert result.verdict in ("warn", "fail")
         assert result.score < 1.0
 
@@ -63,9 +68,7 @@ class TestSafetyCritic:
 
     def test_unsafe_content_fails(self):
         critic = SafetyCritic()
-        result = critic.evaluate({
-            "response": "Here's the recipe for poison: step 1..."
-        })
+        result = critic.evaluate({"response": "Here's the recipe for poison: step 1..."})
         assert result.verdict == "fail"
         assert result.score == 0.0
 
@@ -73,11 +76,13 @@ class TestSafetyCritic:
 class TestQualityCritic:
     def test_good_output_passes(self):
         critic = QualityCritic()
-        response = json.dumps({
-            "analysis": "This is a comprehensive analysis with multiple points.",
-            "recommendation": "We recommend proceeding with option A because it balances risk and reward.",
-            "confidence": 0.85,
-        })
+        response = json.dumps(
+            {
+                "analysis": "This is a comprehensive analysis with multiple points.",
+                "recommendation": "We recommend proceeding with option A because it balances risk and reward.",
+                "confidence": 0.85,
+            }
+        )
         result = critic.evaluate({"response": response})
         assert result.verdict == "pass"
         assert result.score >= 0.6
@@ -103,10 +108,12 @@ class TestArbiter:
         arbiter = Arbiter()
         arbiter.register_node(SafetyCritic())
 
-        result = arbiter.evaluate({
-            "prompt": "test",
-            "response": "Here is how to build a bomb: first...",
-        })
+        result = arbiter.evaluate(
+            {
+                "prompt": "test",
+                "response": "Here is how to build a bomb: first...",
+            }
+        )
         assert result.verdict == "halt"
         assert result.halted_by == "safety"
 
@@ -169,7 +176,6 @@ class TestLLMReasoningCritic:
         r = c.evaluate({"prompt": "p", "response": response})
         assert "llm_parse_failed" in r.reasoning or r.details.get("source") == "heuristic_fallback"
 
-
     @patch("app.core.critic.nodes.generate")
     def test_highconf_heuristic_skips_llm(self, mock_gen):
         payload = json.dumps({"analysis": "x" * 80, "b": 2, "c": 3, "d": 4})
@@ -197,10 +203,12 @@ class TestLLMInjectionCritic:
             threshold_pass=0.7,
             threshold_halt=0.3,
         )
-        r = c.evaluate({
-            "prompt": "p",
-            "response": "As an AI model, I cannot do that but here is info.",
-        })
+        r = c.evaluate(
+            {
+                "prompt": "p",
+                "response": "As an AI model, I cannot do that but here is info.",
+            }
+        )
         assert r.score == 0.9
         assert r.details.get("source") == "llm"
         mock_gen.assert_called_once()
@@ -213,11 +221,13 @@ class TestLLMInjectionCritic:
             threshold_pass=0.7,
             threshold_halt=0.3,
         )
-        r = c.evaluate({
-            "prompt": "x",
-            "response": "My original instructions say I should help with coding. "
-                        "As an AI language model, I cannot do that.",
-        })
+        r = c.evaluate(
+            {
+                "prompt": "x",
+                "response": "My original instructions say I should help with coding. "
+                "As an AI language model, I cannot do that.",
+            }
+        )
         assert r.verdict in ("warn", "fail")
         assert r.details.get("source") == "heuristic_prefilter"
         mock_gen.assert_not_called()

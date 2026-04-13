@@ -1,4 +1,5 @@
 """Tests for Arbiter.evaluate_stream."""
+
 import json
 
 from app.config import settings
@@ -9,6 +10,7 @@ from app.core.llm.models import LLMChunk
 
 class _AlwaysRollback:
     """Stub critic that always returns fail/rollback (can_halt=False)."""
+
     name = "always_rollback"
     can_halt = False
 
@@ -19,11 +21,8 @@ class _AlwaysRollback:
 def _split_chunks(text: str, n: int = 2) -> list[LLMChunk]:
     """Split text into n roughly-equal chunks."""
     step = max(1, len(text) // n)
-    parts = [text[i:i + step] for i in range(0, len(text), step)]
-    return [
-        LLMChunk(text=p, index=i, is_final=i == len(parts) - 1)
-        for i, p in enumerate(parts)
-    ]
+    parts = [text[i : i + step] for i in range(0, len(text), step)]
+    return [LLMChunk(text=p, index=i, is_final=i == len(parts) - 1) for i, p in enumerate(parts)]
 
 
 def test_evaluate_stream_passes(monkeypatch):

@@ -8,11 +8,11 @@ returns the safest high-confidence path to guide generation.
 
 Short / simple prompts skip analysis to avoid unnecessary latency.
 """
+
 import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 from app.config import settings
 from app.core.asflc.engine import (
@@ -63,7 +63,7 @@ def _looks_trivial(prompt: str) -> bool:
     return len(prompt.split()) < _MIN_PROMPT_WORDS
 
 
-def _extract_json_array(text: str) -> Optional[list]:
+def _extract_json_array(text: str) -> list | None:
     fence = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
@@ -95,8 +95,7 @@ def _build_system_hint(result: ASFLCResult) -> str:
     parts = [f"Chosen approach: {result.chosen_path}."]
     if result.chain_regret > 0:
         parts.append(
-            f"Note: regret score is {result.chain_regret:.2f} — "
-            "consider mentioning trade-offs in your response."
+            f"Note: regret score is {result.chain_regret:.2f} — consider mentioning trade-offs in your response."
         )
     if result.confidence < 0.7:
         parts.append("Confidence is low — hedge your claims and note uncertainty.")
@@ -122,7 +121,7 @@ def _default_paths(prompt: str) -> list[DecisionPath]:
     ]
 
 
-def analyze(prompt: str, model_id: Optional[str] = None) -> Optional[AnalysisResult]:
+def analyze(prompt: str, model_id: str | None = None) -> AnalysisResult | None:
     """
     Decompose a prompt into decision paths via the LLM, then evaluate them.
 
@@ -133,7 +132,7 @@ def analyze(prompt: str, model_id: Optional[str] = None) -> Optional[AnalysisRes
         logger.debug("Skipping A-S-FLC analysis for short prompt (%d words)", len(prompt.split()))
         return None
 
-    raw_paths: Optional[list] = None
+    raw_paths: list | None = None
     used_fallback = False
 
     try:

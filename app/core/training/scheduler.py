@@ -4,33 +4,38 @@ labeling queue and auto-exports reviewed items.
 
 Runs in a daemon thread started from the FastAPI lifespan.
 """
+
 import logging
 import threading
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_INTERVAL_SECONDS = 300
 _stop_event = threading.Event()
-_thread: Optional[threading.Thread] = None
+_thread: threading.Thread | None = None
 
 
 def _run_export_cycle() -> dict:
-    from app.db import SessionLocal
     from app.core.training.labeler import export_for_training
+    from app.core.training.outbox import enqueue_failed_import, process_outbox_retries
+    from app.db import SessionLocal
     from app.models.labeling_queue import LabelingItem
     from app.services.doctrine_bridge import compute_batch_id, import_dataset, is_configured
 
     db = SessionLocal()
     try:
-        pending = (
-            db.query(LabelingItem)
-            .filter_by(status="labeled", label="correct_flag")
-            .limit(100)
-            .all()
-        )
+        outbox_stats = process_outbox_retries(db)
+
+        pending = db.query(LabelingItem).filter_by(status="labeled", label="correct_flag").limit(100).all()
         if not pending:
-            return {"exported": 0}
+            from app.core.training.calibration import persist_calibration_snapshot
+
+            snap_id = None
+            try:
+                snap_id = persist_calibration_snapshot(db)
+            except Exception:
+                logger.debug("Calibration snapshot skipped", exc_info=True)
+            return {"exported": 0, "outbox_retries": outbox_stats, "calibration_snapshot_id": snap_id}
 
         trace_ids = [item.trace_id for item in pending]
         batch_id = compute_batch_id(trace_ids)
@@ -49,13 +54,33 @@ def _run_export_cycle() -> dict:
                     training_items=items,
                     batch_id=batch_id,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning("Scheduled export: Doctrine Lab send failed", exc_info=True)
+                try:
+                    enqueue_failed_import(
+                        db,
+                        batch_id=batch_id,
+                        dataset_type="agent_safety",
+                        items=items,
+                        error_message=str(exc),
+                    )
+                except Exception:
+                    logger.exception("Failed to enqueue Doctrine retry")
+
+        from app.core.training.calibration import persist_calibration_snapshot
+
+        snap_id = None
+        try:
+            snap_id = persist_calibration_snapshot(db)
+        except Exception:
+            logger.debug("Calibration snapshot skipped or failed", exc_info=True)
 
         return {
             "exported": len(items),
             "batch_id": batch_id,
             "doctrine_lab": doctrine_result,
+            "outbox_retries": outbox_stats,
+            "calibration_snapshot_id": snap_id,
         }
     finally:
         db.close()

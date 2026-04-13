@@ -38,6 +38,7 @@
 
   {% if item.status == 'pending' %}
   <form method="POST" action="/dashboard/labeling/{{ item.id }}/label" style="display: flex; gap: 8px; align-items: center;">
+    {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
     <select name="label" class="btn" style="background: var(--surface-alt); color: var(--text); border: 1px solid var(--border);">
       <option value="correct_flag">Correct Flag</option>
       <option value="false_positive">False Positive</option>

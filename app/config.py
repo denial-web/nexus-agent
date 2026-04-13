@@ -5,10 +5,16 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 
     PROJECT_NAME: str = "Nexus Agent"
+    ENVIRONMENT: str = "development"
+    LOG_LEVEL: str = "INFO"
     DATABASE_URL: str = "sqlite:///./nexus.db"
 
     NEXUS_API_KEY: str = ""
     RATE_LIMIT_RPM: int = 30
+
+    # Comma-separated origins; empty = CORS middleware not installed (same-origin only)
+    CORS_ORIGINS: str = ""
+    EXPOSE_METRICS: bool = True
 
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
@@ -17,6 +23,10 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_MODEL: str = "deepseek-chat"
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+
+    # Local / HuggingFace (Nexus Spin v5.3 — use model_id local:repo/name or nexus-spin-v5.3)
+    LOCAL_HF_MODEL_ID: str = ""
+    LOCAL_HF_DEVICE: str = "cpu"
 
     # Covernor governance
     APPROVAL_QUORUM: int = 2
@@ -35,6 +45,10 @@ class Settings(BaseSettings):
     # Doctrine Lab integration
     DOCTRINE_LAB_URL: str = "http://localhost:8000"
     DOCTRINE_LAB_API_KEY: str = ""
+
+    # Dashboard — session signing (always set in production)
+    SESSION_SECRET: str = ""
+    ENFORCE_DASHBOARD_CSRF: bool = False
 
 
 settings = Settings()

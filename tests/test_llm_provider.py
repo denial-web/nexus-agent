@@ -1,15 +1,15 @@
 """Tests for the unified LLM provider (mocked providers)."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from app.config import settings
 from app.core.llm.provider import (
+    _resolve_route,
     generate,
     generate_stream,
     mock_llm_text,
     reset_clients,
-    _resolve_route,
 )
 
 
@@ -96,6 +96,25 @@ class TestMockFallback:
         assert chunks[0].text == mock_llm_text("hello")
 
 
+class TestLocalProvider:
+    def test_resolve_nexus_spin(self):
+        prov, model, _ = _resolve_route("nexus-spin-v5.3")
+        assert prov == "local"
+        assert model == "nexus-spin-v5.3"
+
+    def test_resolve_local_uses_config_model(self, monkeypatch):
+        monkeypatch.setattr(settings, "LOCAL_HF_MODEL_ID", "org/nexus-custom")
+        prov, model, _ = _resolve_route("local")
+        assert prov == "local"
+        assert model == "org/nexus-custom"
+
+    def test_generate_stub_without_transformers(self):
+        out = generate("hello local", model_id="local:test-model")
+        assert out.provider == "local"
+        assert out.model_id == "test-model"
+        assert "local_stub" in out.text
+
+
 class TestGeminiProvider:
     def _fake_response(self, text="hello from gemini", token_count=42):
         resp = MagicMock()
@@ -146,7 +165,9 @@ class TestGeminiProvider:
 
         mock_client = MagicMock()
         mock_client.models.generate_content.side_effect = genai_errors.ClientError(
-            401, {"error": {"code": 401, "status": "UNAUTHENTICATED"}}, None,
+            401,
+            {"error": {"code": 401, "status": "UNAUTHENTICATED"}},
+            None,
         )
 
         with patch("google.genai.Client", return_value=mock_client):

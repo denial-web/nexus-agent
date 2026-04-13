@@ -5,10 +5,10 @@ When the critic tree halts or flags a generation, the failure trace
 is pushed to the labeling queue. Reviewed items are exported in
 fine-tuning format and fed back into the model improvement loop.
 """
+
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -20,9 +20,9 @@ def push_failure(
     source_node: str,
     failure_type: str,
     prompt: str,
-    response: Optional[str],
+    response: str | None,
     critic_output: dict,
-    db_session: Optional[Session] = None,
+    db_session: Session | None = None,
 ) -> dict:
     """Push a failure trace to the labeling queue."""
     from app.models.labeling_queue import LabelingItem
@@ -44,7 +44,9 @@ def push_failure(
         db_session.refresh(item)
         logger.info(
             "Pushed failure to labeling queue: %s (source=%s, type=%s)",
-            item.id, source_node, failure_type,
+            item.id,
+            source_node,
+            failure_type,
         )
         return _to_dict(item)
 
@@ -61,10 +63,10 @@ def label_item(
     item_id: str,
     label: str,
     reviewer_id: str,
-    corrected_response: Optional[str] = None,
-    reviewer_notes: Optional[str] = None,
-    db_session: Optional[Session] = None,
-) -> Optional[dict]:
+    corrected_response: str | None = None,
+    reviewer_notes: str | None = None,
+    db_session: Session | None = None,
+) -> dict | None:
     """Apply a human label to a queued item."""
     if not db_session:
         return None
@@ -80,7 +82,7 @@ def label_item(
     item.corrected_response = corrected_response
     item.reviewer_notes = reviewer_notes
     item.status = "labeled"
-    item.labeled_at = datetime.now(timezone.utc)
+    item.labeled_at = datetime.now(UTC)
 
     db_session.commit()
     db_session.refresh(item)
@@ -89,9 +91,9 @@ def label_item(
 
 def get_queue(
     status: str = "pending",
-    failure_type: Optional[str] = None,
+    failure_type: str | None = None,
     limit: int = 50,
-    db_session: Optional[Session] = None,
+    db_session: Session | None = None,
 ) -> list[dict]:
     """Get items from the labeling queue."""
     if not db_session:
@@ -108,9 +110,9 @@ def get_queue(
 
 def export_for_training(
     batch_size: int = 100,
-    batch_id: Optional[str] = None,
+    batch_id: str | None = None,
     enrich_evidential: bool = False,
-    db_session: Optional[Session] = None,
+    db_session: Session | None = None,
 ) -> list[dict]:
     """
     Export labeled items in fine-tuning format.
@@ -126,21 +128,16 @@ def export_for_training(
 
     from app.models.labeling_queue import LabelingItem
 
-    items = (
-        db_session.query(LabelingItem)
-        .filter_by(status="labeled", label="correct_flag")
-        .limit(batch_size)
-        .all()
-    )
+    items = db_session.query(LabelingItem).filter_by(status="labeled", label="correct_flag").limit(batch_size).all()
 
     if not batch_id:
         batch_id = uuid.uuid4().hex[:12]
 
     trace_map: dict = {}
-    calibration_ece: Optional[float] = None
+    calibration_ece: float | None = None
     if enrich_evidential and items:
-        from app.models.trace import Trace
         from app.core.training.calibration import get_ece_tracker
+        from app.models.trace import Trace
 
         trace_ids = [i.trace_id for i in items]
         traces = db_session.query(Trace).filter(Trace.id.in_(trace_ids)).all()
@@ -169,6 +166,7 @@ def export_for_training(
 
         if enrich_evidential and item.trace_id in trace_map:
             from app.core.training.evidential import enrich_training_item
+
             export_item = enrich_training_item(
                 export_item,
                 trace_map[item.trace_id],
@@ -179,7 +177,7 @@ def export_for_training(
 
         item.status = "exported"
         item.training_batch_id = batch_id
-        item.exported_at = datetime.now(timezone.utc)
+        item.exported_at = datetime.now(UTC)
 
     if items:
         db_session.commit()

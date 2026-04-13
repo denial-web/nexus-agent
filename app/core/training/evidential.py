@@ -8,8 +8,9 @@ process can weight examples appropriately:
 - Critic scores per node → evaluation uncertainty
 - ECE calibration adjustments → systematic bias correction
 """
+
 import logging
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 def enrich_training_item(
     item: dict[str, Any],
     trace: Any,
-    calibration_ece: Optional[float] = None,
+    calibration_ece: float | None = None,
 ) -> dict[str, Any]:
     """
     Add evidential loss metadata to a single training export item.
@@ -86,7 +87,7 @@ def _compute_sample_weight(evidential: dict) -> float:
 
     asflc_conf = evidential.get("asflc_confidence")
     if asflc_conf is not None:
-        weight *= (0.5 + 0.5 * asflc_conf)
+        weight *= 0.5 + 0.5 * asflc_conf
 
     regret = evidential.get("chain_regret", 0.0)
     if regret > 0:

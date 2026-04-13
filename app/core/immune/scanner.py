@@ -5,19 +5,19 @@ Provides multi-language prompt-injection detection, session-based
 escalation tracking, prompt hardening, and output scanning.
 This is the first and last checkpoint in the zero-trust pipeline.
 """
+
 import hashlib
 import logging
 import re
 import threading
 import time
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     PASS = "pass"
     BLOCK = "block"
     FLAG = "flag"
@@ -94,6 +94,7 @@ _compiled_leaks = [re.compile(p, re.IGNORECASE) for p in OUTPUT_LEAK_PATTERNS]
 
 # ── Semantic Memory Bank ───────────────────────────────────────────
 
+
 class MemoryBank:
     """
     Stores known attack signatures and matches new prompts against them.
@@ -114,10 +115,10 @@ class MemoryBank:
         if tokens:
             with self._lock:
                 if len(self._signatures) >= self._MAX_SIGNATURES:
-                    self._signatures = self._signatures[self._MAX_SIGNATURES // 5:]
+                    self._signatures = self._signatures[self._MAX_SIGNATURES // 5 :]
                 self._signatures.append((text, tokens))
 
-    def match(self, text: str) -> Optional[str]:
+    def match(self, text: str) -> str | None:
         tokens = self._tokenize(text)
         if not tokens:
             return None
@@ -150,6 +151,7 @@ def get_memory_bank() -> MemoryBank:
 
 
 # ── Escalation Tracker ─────────────────────────────────────────────
+
 
 class EscalationTracker:
     """
@@ -209,15 +211,12 @@ class EscalationTracker:
     def _evict_stale(self, now: float) -> None:
         """Remove sessions whose score has fully decayed. Caller must hold _lock."""
         cutoff = self._decay_seconds * self._CLEANUP_MULTIPLIER
-        stale = [
-            sid for sid, (_, ts) in self._sessions.items()
-            if (now - ts) > cutoff
-        ]
+        stale = [sid for sid, (_, ts) in self._sessions.items() if (now - ts) > cutoff]
         for sid in stale:
             del self._sessions[sid]
         if len(self._sessions) > self._MAX_SESSIONS:
             by_age = sorted(self._sessions.items(), key=lambda kv: kv[1][1])
-            for sid, _ in by_age[:len(self._sessions) - self._MAX_SESSIONS]:
+            for sid, _ in by_age[: len(self._sessions) - self._MAX_SESSIONS]:
                 del self._sessions[sid]
 
 
@@ -231,7 +230,8 @@ def get_escalation_tracker() -> EscalationTracker:
 # ── Prompt Hardener ────────────────────────────────────────────────
 
 _HARDENING_REMOVALS = [
-    re.compile(p, re.IGNORECASE) for p in [
+    re.compile(p, re.IGNORECASE)
+    for p in [
         r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|rules|prompts)[.\s]*",
         r"you\s+are\s+now\s+(DAN|evil|jailbroken|unrestricted)[.\s]*",
         r"\bDAN\s+mode\b[.\s]*",
@@ -262,9 +262,10 @@ def harden_prompt(prompt: str) -> tuple[str, list[str]]:
 
 # ── Core scan functions ────────────────────────────────────────────
 
+
 def scan_input(
     prompt: str,
-    session_id: Optional[str] = None,
+    session_id: str | None = None,
 ) -> ScanResult:
     """Scan an inbound prompt for injection attempts and escalation."""
     triggers: list[str] = []
@@ -323,9 +324,7 @@ def scan_input(
         details={
             "prompt_length": len(prompt),
             "prompt_hash": _hash(prompt),
-            "session_escalation": (
-                _escalation_tracker.get_score(session_id) if session_id else None
-            ),
+            "session_escalation": (_escalation_tracker.get_score(session_id) if session_id else None),
         },
     )
 

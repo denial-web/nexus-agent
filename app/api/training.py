@@ -1,6 +1,6 @@
 """Training flywheel API — labeling, export, eval, fine-tuning, and calibration endpoints."""
+
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -15,8 +15,8 @@ router = APIRouter(prefix="/api/training", tags=["Training"])
 class LabelRequest(BaseModel):
     label: str
     reviewer_id: str
-    corrected_response: Optional[str] = None
-    reviewer_notes: Optional[str] = None
+    corrected_response: str | None = None
+    reviewer_notes: str | None = None
 
 
 class ExportRequest(BaseModel):
@@ -33,9 +33,9 @@ class EvalReportRequest(BaseModel):
 
 
 class FinetuneRequest(BaseModel):
-    model_id: Optional[str] = None
+    model_id: str | None = None
     dataset_type: str = "agent_safety"
-    batch_ids: Optional[list[str]] = None
+    batch_ids: list[str] | None = None
 
 
 class LoraCompareRequest(BaseModel):
@@ -44,10 +44,15 @@ class LoraCompareRequest(BaseModel):
     test_trace_ids: list[str]
 
 
+class PromoteAdapterRequest(BaseModel):
+    job_id: str
+    node_name: str
+
+
 @router.get("/queue")
 def get_labeling_queue(
     status: str = "pending",
-    failure_type: Optional[str] = None,
+    failure_type: str | None = None,
     db: Session = Depends(get_db),
 ):
     """View the labeling queue for training flywheel."""
@@ -86,12 +91,7 @@ def export_and_send(req: ExportRequest, db: Session = Depends(get_db)):
         is_configured,
     )
 
-    pending_items = (
-        db.query(LabelingItem)
-        .filter_by(status="labeled", label="correct_flag")
-        .limit(req.batch_size)
-        .all()
-    )
+    pending_items = db.query(LabelingItem).filter_by(status="labeled", label="correct_flag").limit(req.batch_size).all()
     if not pending_items:
         return {"exported": 0, "batch_id": None, "doctrine_lab": None}
 
@@ -113,9 +113,21 @@ def export_and_send(req: ExportRequest, db: Session = Depends(get_db)):
                 batch_id=batch_id,
                 dataset_type=req.dataset_type,
             )
-        except Exception:
+        except Exception as exc:
             logger.warning("Failed to send to Doctrine Lab", exc_info=True)
-            doctrine_result = {"error": "Failed to send to Doctrine Lab"}
+            doctrine_result = {"error": str(exc)}
+            try:
+                from app.core.training.outbox import enqueue_failed_import
+
+                enqueue_failed_import(
+                    db,
+                    batch_id=batch_id,
+                    dataset_type=req.dataset_type,
+                    items=items,
+                    error_message=str(exc),
+                )
+            except Exception:
+                logger.exception("Could not enqueue Doctrine Lab retry")
 
     return {
         "exported": len(items),
@@ -141,7 +153,7 @@ def submit_eval(req: EvalReportRequest, db: Session = Depends(get_db)):
         result = submit_eval_report(report)
     except Exception as exc:
         logger.warning("Eval report failed: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return result
 
@@ -162,13 +174,103 @@ def trigger_finetune_endpoint(req: FinetuneRequest):
         )
     except Exception as exc:
         logger.warning("Finetune trigger failed: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return result
 
 
+@router.get("/finetune/status/{job_id}")
+def finetune_job_status(job_id: str):
+    """Poll Doctrine Lab for fine-tune job status."""
+    from app.services.doctrine_bridge import get_finetune_job_status, is_configured
+
+    if not is_configured():
+        raise HTTPException(status_code=503, detail="Doctrine Lab not configured")
+    try:
+        return get_finetune_job_status(job_id)
+    except Exception as exc:
+        logger.warning("Finetune status failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/promote-adapter")
+def promote_adapter_endpoint(req: PromoteAdapterRequest, db: Session = Depends(get_db)):
+    """
+    After a fine-tune job completes, promote the resulting LoRA path to a critic node.
+
+    Expects Doctrine Lab job payload to include adapter_path, lora_adapter_path, or output_path.
+    """
+    from app.agent.pipeline import invalidate_arbiter_cache
+    from app.models.critic_registry import CriticNode
+    from app.services.doctrine_bridge import get_finetune_job_status, is_configured
+
+    if not is_configured():
+        raise HTTPException(status_code=503, detail="Doctrine Lab not configured")
+
+    try:
+        status = get_finetune_job_status(req.job_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if status.get("skipped"):
+        raise HTTPException(status_code=503, detail="Doctrine Lab not configured")
+
+    job_status = (status.get("status") or status.get("state") or "").lower()
+    if job_status not in ("succeeded", "completed", "success"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job not in a promotable state: {job_status or status}",
+        )
+
+    adapter = status.get("adapter_path") or status.get("lora_adapter_path") or status.get("output_path")
+    if not adapter:
+        raise HTTPException(status_code=400, detail="No adapter path in job response")
+
+    node = db.query(CriticNode).filter_by(name=req.node_name).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Critic node not found")
+
+    node.lora_adapter_path = adapter
+    db.commit()
+    invalidate_arbiter_cache()
+    return {"promoted": True, "node_name": req.node_name, "lora_adapter_path": adapter}
+
+
+@router.post("/calibration/persist")
+def persist_calibration(db: Session = Depends(get_db)):
+    """Write the current in-memory ECE metrics to calibration_snapshots."""
+    from app.core.training.calibration import persist_calibration_snapshot
+
+    snap_id = persist_calibration_snapshot(db)
+    if snap_id is None:
+        raise HTTPException(status_code=400, detail="No calibration samples to persist")
+    return {"snapshot_id": snap_id}
+
+
+@router.get("/calibration/snapshots")
+def list_calibration_snapshots(limit: int = 20, db: Session = Depends(get_db)):
+    """Recent persisted calibration snapshots."""
+    from app.models.training_meta import CalibrationSnapshot
+
+    rows = db.query(CalibrationSnapshot).order_by(CalibrationSnapshot.recorded_at.desc()).limit(min(limit, 100)).all()
+    return {
+        "snapshots": [
+            {
+                "id": r.id,
+                "recorded_at": r.recorded_at.isoformat() if r.recorded_at else None,
+                "ece": r.ece,
+                "num_samples": r.num_samples,
+                "needs_recalibration": r.needs_recalibration,
+                "per_node_ece": r.per_node_ece,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
 @router.get("/calibration")
-def get_calibration(node_name: Optional[str] = None):
+def get_calibration(node_name: str | None = None):
     """Get ECE calibration report for the critic tree."""
     from app.core.training.calibration import get_ece_tracker
 
@@ -191,9 +293,9 @@ def compare_lora_adapter(req: LoraCompareRequest, db: Session = Depends(get_db))
     Re-evaluates the given traces with the current adapter, then with the new
     adapter, and returns a side-by-side comparison.
     """
+    from app.agent.pipeline import invalidate_arbiter_cache
     from app.models.critic_registry import CriticNode
     from app.services.replay import re_evaluate_trace
-    from app.agent.pipeline import invalidate_arbiter_cache
 
     node = db.query(CriticNode).filter_by(id=req.node_id).first()
     if not node:

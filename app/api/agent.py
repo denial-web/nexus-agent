@@ -1,6 +1,6 @@
 """Agent execution endpoints."""
+
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -14,8 +14,8 @@ router = APIRouter(prefix="/api/agent", tags=["Agent"])
 
 class RunRequest(BaseModel):
     prompt: str
-    session_id: Optional[str] = None
-    model_id: Optional[str] = None
+    session_id: str | None = None
+    model_id: str | None = None
 
 
 @router.post("/run")

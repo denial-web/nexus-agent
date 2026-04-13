@@ -1,10 +1,10 @@
 """Tests for advanced training features: ECE calibration, evidential loss,
 LoRA comparison, and scheduled export."""
+
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from app.core.training.calibration import (
     ECETracker,
     get_ece_tracker,
@@ -186,11 +186,14 @@ class TestLoraCompare:
         r = run("What is 2+2?", db_session=db_session)
         trace_id = r.trace_id
 
-        resp = client.post("/api/training/lora/compare", json={
-            "node_id": node.id,
-            "new_lora_path": "/tmp/test_adapter.bin",
-            "test_trace_ids": [trace_id],
-        })
+        resp = client.post(
+            "/api/training/lora/compare",
+            json={
+                "node_id": node.id,
+                "new_lora_path": "/tmp/test_adapter.bin",
+                "test_trace_ids": [trace_id],
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["node_name"] == "reasoning"
@@ -200,11 +203,14 @@ class TestLoraCompare:
         assert data["before"]["count"] == 1
 
     def test_compare_node_not_found(self, client):
-        resp = client.post("/api/training/lora/compare", json={
-            "node_id": "nonexistent",
-            "new_lora_path": "/tmp/test.bin",
-            "test_trace_ids": ["t1"],
-        })
+        resp = client.post(
+            "/api/training/lora/compare",
+            json={
+                "node_id": "nonexistent",
+                "new_lora_path": "/tmp/test.bin",
+                "test_trace_ids": ["t1"],
+            },
+        )
         assert resp.status_code == 404
 
 

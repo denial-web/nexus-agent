@@ -1,6 +1,6 @@
 """Trace replay and audit log endpoints."""
+
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -24,8 +24,8 @@ def re_evaluate_trace_endpoint(trace_id: str, db: Session = Depends(get_db)):
 
 @router.get("")
 def list_traces(
-    session_id: Optional[str] = None,
-    status: Optional[str] = None,
+    session_id: str | None = None,
+    status: str | None = None,
     limit: int = Query(50, le=200),
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -86,47 +86,57 @@ def replay_trace(trace_id: str, db: Session = Depends(get_db)):
 
     steps = []
 
-    steps.append({
-        "step": 1,
-        "name": "input_scan",
-        "verdict": trace.immune_verdict,
-        "score": trace.immune_score,
-        "details": trace.immune_details,
-    })
+    steps.append(
+        {
+            "step": 1,
+            "name": "input_scan",
+            "verdict": trace.immune_verdict,
+            "score": trace.immune_score,
+            "details": trace.immune_details,
+        }
+    )
 
     if trace.asflc_result:
-        steps.append({
-            "step": 2,
-            "name": "asflc_analysis",
-            "chosen_path": trace.asflc_chosen_path,
-            "confidence": trace.asflc_confidence,
-            "loops": trace.asflc_loops,
-            "result": trace.asflc_result,
-        })
+        steps.append(
+            {
+                "step": 2,
+                "name": "asflc_analysis",
+                "chosen_path": trace.asflc_chosen_path,
+                "confidence": trace.asflc_confidence,
+                "loops": trace.asflc_loops,
+                "result": trace.asflc_result,
+            }
+        )
 
     if trace.critic_verdict:
-        steps.append({
-            "step": 3,
-            "name": "critic_evaluation",
-            "verdict": trace.critic_verdict,
-            "scores": trace.critic_scores,
-            "rollback_count": trace.critic_rollback_count,
-        })
+        steps.append(
+            {
+                "step": 3,
+                "name": "critic_evaluation",
+                "verdict": trace.critic_verdict,
+                "scores": trace.critic_scores,
+                "rollback_count": trace.critic_rollback_count,
+            }
+        )
 
     if trace.governance_status:
-        steps.append({
-            "step": 4,
-            "name": "governance_check",
-            "status": trace.governance_status,
-            "policy_id": trace.governance_policy_id,
-        })
+        steps.append(
+            {
+                "step": 4,
+                "name": "governance_check",
+                "status": trace.governance_status,
+                "policy_id": trace.governance_policy_id,
+            }
+        )
 
     if trace.output_scan_verdict:
-        steps.append({
-            "step": 5,
-            "name": "output_scan",
-            "verdict": trace.output_scan_verdict,
-        })
+        steps.append(
+            {
+                "step": 5,
+                "name": "output_scan",
+                "verdict": trace.output_scan_verdict,
+            }
+        )
 
     return {
         "trace_id": trace.id,

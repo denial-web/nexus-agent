@@ -1,6 +1,7 @@
 """Re-run critic evaluation against stored traces (audit-safe; does not mutate traces)."""
+
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -9,7 +10,7 @@ from app.core.critic.arbiter import Arbiter
 logger = logging.getLogger(__name__)
 
 
-def re_evaluate_trace(trace_id: str, db_session: Session) -> Optional[dict[str, Any]]:
+def re_evaluate_trace(trace_id: str, db_session: Session) -> dict[str, Any] | None:
     """
     Load a trace and run the current critic registry against its prompt/response.
 
@@ -46,10 +47,7 @@ def re_evaluate_trace(trace_id: str, db_session: Session) -> Optional[dict[str, 
 
     original_verdict = trace.critic_verdict
     new_verdict = result.verdict
-    drift = (
-        new_verdict != original_verdict
-        or (result.rollback_count or 0) != (trace.critic_rollback_count or 0)
-    )
+    drift = new_verdict != original_verdict or (result.rollback_count or 0) != (trace.critic_rollback_count or 0)
 
     return {
         "trace_id": trace_id,

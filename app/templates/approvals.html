@@ -39,11 +39,13 @@
   {% if req.status == 'pending' %}
   <div class="mt-16" style="display: flex; gap: 8px;">
     <form method="POST" action="/dashboard/approvals/{{ req.id }}/vote">
+      {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
       <input type="hidden" name="decision" value="approve">
       <input type="hidden" name="approver_id" value="dashboard-user">
       <button type="submit" class="btn btn-green btn-sm">Approve</button>
     </form>
     <form method="POST" action="/dashboard/approvals/{{ req.id }}/vote">
+      {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
       <input type="hidden" name="decision" value="deny">
       <input type="hidden" name="approver_id" value="dashboard-user">
       <button type="submit" class="btn btn-red btn-sm">Deny</button>

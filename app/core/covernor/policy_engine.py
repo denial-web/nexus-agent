@@ -5,10 +5,10 @@ Evaluates proposed actions against the policy table. Unknown actions
 are denied by default. Matching policies determine whether an action
 is auto-allowed, requires K-of-N approval, or is blocked.
 """
+
 import fnmatch
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 class PolicyDecision:
     action: str
     decision: str  # "allow", "require_approval", "deny"
-    policy_id: Optional[str]
-    policy_name: Optional[str]
+    policy_id: str | None
+    policy_name: str | None
     risk_level: str
     required_approvals: int
     reason: str
@@ -28,9 +28,9 @@ class PolicyDecision:
 
 def evaluate_action(
     action_type: str,
-    resource: Optional[str] = None,
-    parameters: Optional[dict] = None,
-    db_session: Optional[Session] = None,
+    resource: str | None = None,
+    parameters: dict | None = None,
+    db_session: Session | None = None,
 ) -> PolicyDecision:
     """
     Evaluate a proposed action against the policy table.
@@ -50,12 +50,7 @@ def evaluate_action(
 
     from app.models.policy import Policy
 
-    policies = (
-        db_session.query(Policy)
-        .filter_by(is_active=True)
-        .order_by(Policy.priority)
-        .all()
-    )
+    policies = db_session.query(Policy).filter_by(is_active=True).order_by(Policy.priority).all()
 
     for policy in policies:
         if not _matches(policy.action_pattern, action_type):

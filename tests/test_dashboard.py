@@ -1,6 +1,6 @@
-from app.models.trace import Trace
-from app.models.labeling_queue import LabelingItem
 from app.models.approval_log import ApprovalRequest
+from app.models.labeling_queue import LabelingItem
+from app.models.trace import Trace
 
 
 class TestDashboardTraces:
@@ -10,16 +10,18 @@ class TestDashboardTraces:
         assert "Execution Traces" in resp.text
 
     def test_traces_page_shows_data(self, client, db_session):
-        db_session.add(Trace(
-            id="dash-trace-1",
-            session_id="s1",
-            prompt="Hello",
-            prompt_hash="abc",
-            immune_verdict="pass",
-            status="completed",
-            model_id="mock",
-            latency_ms=42.0,
-        ))
+        db_session.add(
+            Trace(
+                id="dash-trace-1",
+                session_id="s1",
+                prompt="Hello",
+                prompt_hash="abc",
+                immune_verdict="pass",
+                status="completed",
+                model_id="mock",
+                latency_ms=42.0,
+            )
+        )
         db_session.commit()
 
         resp = client.get("/dashboard")
@@ -27,18 +29,20 @@ class TestDashboardTraces:
         assert "dash-trace-1" in resp.text
 
     def test_trace_detail_page(self, client, db_session):
-        db_session.add(Trace(
-            id="dash-detail-1",
-            session_id="s1",
-            prompt="What is 2+2?",
-            prompt_hash="abc",
-            immune_verdict="pass",
-            status="completed",
-            response="4",
-            model_id="mock",
-            critic_verdict="pass",
-            critic_scores={"reasoning": {"score": 0.9, "verdict": "pass", "reasoning": "Good"}},
-        ))
+        db_session.add(
+            Trace(
+                id="dash-detail-1",
+                session_id="s1",
+                prompt="What is 2+2?",
+                prompt_hash="abc",
+                immune_verdict="pass",
+                status="completed",
+                response="4",
+                model_id="mock",
+                critic_verdict="pass",
+                critic_scores={"reasoning": {"score": 0.9, "verdict": "pass", "reasoning": "Good"}},
+            )
+        )
         db_session.commit()
 
         resp = client.get("/dashboard/traces/dash-detail-1")
@@ -58,16 +62,18 @@ class TestDashboardLabeling:
         assert "Labeling Queue" in resp.text
 
     def test_labeling_shows_items(self, client, db_session):
-        db_session.add(LabelingItem(
-            id="label-item-1",
-            trace_id="t1",
-            source_node="safety",
-            failure_type="injection",
-            prompt="bad prompt",
-            response="bad response",
-            critic_output={"safety": {"score": 0.2}},
-            status="pending",
-        ))
+        db_session.add(
+            LabelingItem(
+                id="label-item-1",
+                trace_id="t1",
+                source_node="safety",
+                failure_type="injection",
+                prompt="bad prompt",
+                response="bad response",
+                critic_output={"safety": {"score": 0.2}},
+                status="pending",
+            )
+        )
         db_session.commit()
 
         resp = client.get("/dashboard/labeling")
@@ -75,15 +81,17 @@ class TestDashboardLabeling:
         assert "bad prompt" in resp.text
 
     def test_apply_label(self, client, db_session):
-        db_session.add(LabelingItem(
-            id="label-item-2",
-            trace_id="t2",
-            source_node="reasoning",
-            failure_type="reasoning",
-            prompt="test",
-            critic_output={},
-            status="pending",
-        ))
+        db_session.add(
+            LabelingItem(
+                id="label-item-2",
+                trace_id="t2",
+                source_node="reasoning",
+                failure_type="reasoning",
+                prompt="test",
+                critic_output={},
+                status="pending",
+            )
+        )
         db_session.commit()
 
         resp = client.post(
@@ -105,16 +113,18 @@ class TestDashboardApprovals:
         assert "Approval Console" in resp.text
 
     def test_approvals_shows_requests(self, client, db_session):
-        db_session.add(ApprovalRequest(
-            id="approval-1",
-            trace_id="t1",
-            action_type="file_write",
-            action_payload={"path": "/tmp/test"},
-            risk_level="high",
-            required_approvals="2",
-            received_approvals="0",
-            status="pending",
-        ))
+        db_session.add(
+            ApprovalRequest(
+                id="approval-1",
+                trace_id="t1",
+                action_type="file_write",
+                action_payload={"path": "/tmp/test"},
+                risk_level="high",
+                required_approvals="2",
+                received_approvals="0",
+                status="pending",
+            )
+        )
         db_session.commit()
 
         resp = client.get("/dashboard/approvals")
@@ -122,16 +132,18 @@ class TestDashboardApprovals:
         assert "file_write" in resp.text
 
     def test_cast_approve_vote(self, client, db_session):
-        db_session.add(ApprovalRequest(
-            id="approval-vote-1",
-            trace_id="t3",
-            action_type="api_call",
-            action_payload={},
-            risk_level="high",
-            required_approvals="1",
-            received_approvals="0",
-            status="pending",
-        ))
+        db_session.add(
+            ApprovalRequest(
+                id="approval-vote-1",
+                trace_id="t3",
+                action_type="api_call",
+                action_payload={},
+                risk_level="high",
+                required_approvals="1",
+                received_approvals="0",
+                status="pending",
+            )
+        )
         db_session.commit()
 
         resp = client.post(
@@ -146,16 +158,18 @@ class TestDashboardApprovals:
         assert req.received_approvals == "1"
 
     def test_cast_deny_vote(self, client, db_session):
-        db_session.add(ApprovalRequest(
-            id="approval-deny-1",
-            trace_id="t4",
-            action_type="fund_transfer",
-            action_payload={},
-            risk_level="critical",
-            required_approvals="2",
-            received_approvals="0",
-            status="pending",
-        ))
+        db_session.add(
+            ApprovalRequest(
+                id="approval-deny-1",
+                trace_id="t4",
+                action_type="fund_transfer",
+                action_payload={},
+                risk_level="critical",
+                required_approvals="2",
+                received_approvals="0",
+                status="pending",
+            )
+        )
         db_session.commit()
 
         resp = client.post(

@@ -5,13 +5,13 @@ Issues single-use, scope-bound tokens after governance approval.
 Each token cryptographically proves that a specific action was approved
 through the K-of-N process.
 """
+
 import json
 import logging
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -21,8 +21,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_private_key: Optional[ec.EllipticCurvePrivateKey] = None
-_public_key: Optional[ec.EllipticCurvePublicKey] = None
+_private_key: ec.EllipticCurvePrivateKey | None = None
+_public_key: ec.EllipticCurvePublicKey | None = None
 
 _issued_tokens: dict[str, "CapabilityToken"] = {}
 
@@ -108,12 +108,12 @@ def verify_signature(payload: dict, signature_hex: str) -> bool:
 def issue_token(
     trace_id: str,
     action_type: str,
-    scope: Optional[dict] = None,
+    scope: dict | None = None,
     ttl_seconds: int = 300,
 ) -> CapabilityToken:
     """Issue a single-use capability token for an approved action."""
     token_id = uuid.uuid4().hex
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires = now + timedelta(seconds=ttl_seconds)
 
     payload = {
@@ -156,7 +156,7 @@ def verify_and_consume(token_id: str) -> tuple[bool, str]:
         return False, "Token already consumed"
 
     expires = datetime.fromisoformat(token.expires_at)
-    if datetime.now(timezone.utc) > expires:
+    if datetime.now(UTC) > expires:
         return False, "Token expired"
 
     payload = {

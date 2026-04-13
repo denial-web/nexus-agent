@@ -9,9 +9,10 @@ Rate limits:
 - POST /api/eval/report: 3/min (enforced by Doctrine Lab)
 - POST /api/finetune/openai/start: no specific limit
 """
+
 import hashlib
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -34,6 +35,10 @@ def _headers() -> dict[str, str]:
         "X-API-Key": settings.DOCTRINE_LAB_API_KEY,
         "Content-Type": "application/json",
     }
+
+
+def _headers_get() -> dict[str, str]:
+    return {"X-API-Key": settings.DOCTRINE_LAB_API_KEY}
 
 
 def _base_url() -> str:
@@ -110,9 +115,9 @@ def submit_eval_report(
 
 
 def trigger_finetune(
-    model_id: Optional[str] = None,
+    model_id: str | None = None,
     dataset_type: str = "agent_safety",
-    batch_ids: Optional[list[str]] = None,
+    batch_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Trigger a fine-tuning job via Doctrine Lab.
@@ -140,4 +145,28 @@ def trigger_finetune(
         raise DoctrineBridgeError(resp.status_code, resp.text)
 
     logger.info("Doctrine Lab finetune triggered: status=%d", resp.status_code)
+    return resp.json()
+
+
+def get_finetune_job_status(job_id: str) -> dict[str, Any]:
+    """
+    Poll fine-tune job status from Doctrine Lab.
+
+    Calls GET /api/finetune/openai/jobs/{job_id} (OpenAI-style job tracking).
+    """
+    if not is_configured():
+        logger.warning("Doctrine Lab not configured; cannot fetch finetune status")
+        return {"skipped": True, "reason": "not_configured"}
+
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        resp = client.get(
+            f"{_base_url()}/api/finetune/openai/jobs/{job_id}",
+            headers=_headers_get(),
+        )
+
+    if resp.status_code == 404:
+        raise DoctrineBridgeError(404, "Job not found")
+    if resp.status_code >= 400:
+        raise DoctrineBridgeError(resp.status_code, resp.text)
+
     return resp.json()

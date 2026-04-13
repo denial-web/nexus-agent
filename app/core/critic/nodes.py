@@ -7,10 +7,10 @@ via the critic_registry DB table and hot-swapped at runtime.
 Phase 1: Heuristic-based nodes (no LLM calls).
 Phase 2: LLM-backed nodes with LoRA adapters from fine-tuning flywheel.
 """
+
 import json
 import logging
 import re
-from typing import Optional
 
 from app.config import settings
 from app.core.critic.arbiter import CriticScore
@@ -33,13 +33,13 @@ _INJECTION_SYSTEM = (
 _CODE_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
 
 
-def _parse_llm_score_json(text: str) -> tuple[Optional[float], str]:
+def _parse_llm_score_json(text: str) -> tuple[float | None, str]:
     """Extract score and reasoning from model output; supports raw JSON, embedded object, and code fences."""
     text = (text or "").strip()
     if not text:
         return None, "empty_llm_response"
 
-    def _try_parse(s: str) -> tuple[Optional[float], str]:
+    def _try_parse(s: str) -> tuple[float | None, str]:
         try:
             data = json.loads(s)
             if isinstance(data, dict) and "score" in data:
@@ -338,9 +338,7 @@ class _LLMCriticBase:
                     details={"source": "heuristic_fallback"},
                 )
             adj = max(0.0, min(1.0, parsed * self.weight))
-            verdict = "pass" if adj >= self.threshold_pass else (
-                "fail" if adj < self.threshold_halt else "warn"
-            )
+            verdict = "pass" if adj >= self.threshold_pass else ("fail" if adj < self.threshold_halt else "warn")
             return CriticScore(
                 node_name=self.name,
                 score=round(adj, 4),
@@ -364,12 +362,22 @@ class LLMReasoningCritic(_LLMCriticBase):
 
     _system_prompt = _REASONING_SYSTEM
 
-    def __init__(self, *, name: str, prompt_template: str, threshold_pass: float,
-                 threshold_halt: float, can_halt: bool = False, weight: float = 1.0):
+    def __init__(
+        self,
+        *,
+        name: str,
+        prompt_template: str,
+        threshold_pass: float,
+        threshold_halt: float,
+        can_halt: bool = False,
+        weight: float = 1.0,
+    ):
         super().__init__(name, prompt_template, threshold_pass, threshold_halt, can_halt, weight)
         self._heuristic = ReasoningCritic(
-            threshold_pass=threshold_pass, threshold_halt=threshold_halt,
-            name=name, can_halt=can_halt,
+            threshold_pass=threshold_pass,
+            threshold_halt=threshold_halt,
+            name=name,
+            can_halt=can_halt,
         )
 
 
@@ -378,8 +386,16 @@ class LLMInjectionCritic(_LLMCriticBase):
 
     _system_prompt = _INJECTION_SYSTEM
 
-    def __init__(self, *, name: str, prompt_template: str, threshold_pass: float,
-                 threshold_halt: float, can_halt: bool = True, weight: float = 1.0):
+    def __init__(
+        self,
+        *,
+        name: str,
+        prompt_template: str,
+        threshold_pass: float,
+        threshold_halt: float,
+        can_halt: bool = True,
+        weight: float = 1.0,
+    ):
         super().__init__(name, prompt_template, threshold_pass, threshold_halt, can_halt, weight)
         self._heuristic = InjectionCritic(name=name, can_halt=can_halt)
 

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -9,7 +9,7 @@ class LLMResponse:
     token_count: int
     latency_ms: float
     provider: str  # "gemini", "openai", "mock"
-    raw_response: Optional[dict[str, Any]] = None
+    raw_response: dict[str, Any] | None = None
 
 
 @dataclass

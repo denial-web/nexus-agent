@@ -1,6 +1,7 @@
 """Governance and approval endpoints."""
+
 import logging
-from typing import Optional
+from datetime import UTC
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -14,9 +15,9 @@ router = APIRouter(prefix="/api/governance", tags=["Governance"])
 
 class PolicyCreate(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     action_pattern: str
-    resource_pattern: Optional[str] = None
+    resource_pattern: str | None = None
     decision: str  # "allow", "require_approval", "deny"
     risk_level: str = "medium"
     required_approvals: int = 0
@@ -26,7 +27,7 @@ class PolicyCreate(BaseModel):
 class ApprovalVoteRequest(BaseModel):
     approver_id: str
     decision: str
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 @router.get("/policies")
@@ -83,11 +84,7 @@ def list_pending_approvals(status: str = "pending", db: Session = Depends(get_db
     from app.models.approval_log import ApprovalRequest
 
     requests = (
-        db.query(ApprovalRequest)
-        .filter_by(status=status)
-        .order_by(ApprovalRequest.created_at.desc())
-        .limit(50)
-        .all()
+        db.query(ApprovalRequest).filter_by(status=status).order_by(ApprovalRequest.created_at.desc()).limit(50).all()
     )
 
     return {
@@ -110,11 +107,11 @@ def list_pending_approvals(status: str = "pending", db: Session = Depends(get_db
 @router.post("/approve/{request_id}")
 def submit_vote(request_id: str, vote: ApprovalVoteRequest, db: Session = Depends(get_db)):
     """Submit an approval or denial vote for a pending action."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from app.config import settings
     from app.core.covernor.token_manager import issue_token
-    from app.core.immune.scanner import scan_output, Verdict
+    from app.core.immune.scanner import Verdict, scan_output
     from app.models.approval_log import ApprovalRequest, ApprovalVote
     from app.models.trace import Trace
 
@@ -128,17 +125,13 @@ def submit_vote(request_id: str, vote: ApprovalVoteRequest, db: Session = Depend
         raise HTTPException(status_code=400, detail=f"Request is already {req.status}")
 
     if req.expires_at:
-        exp = req.expires_at if req.expires_at.tzinfo else req.expires_at.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) > exp:
+        exp = req.expires_at if req.expires_at.tzinfo else req.expires_at.replace(tzinfo=UTC)
+        if datetime.now(UTC) > exp:
             req.status = "expired"
             db.commit()
             raise HTTPException(status_code=400, detail="Approval request has expired")
 
-    dup = (
-        db.query(ApprovalVote)
-        .filter_by(request_id=request_id, approver_id=vote.approver_id)
-        .first()
-    )
+    dup = db.query(ApprovalVote).filter_by(request_id=request_id, approver_id=vote.approver_id).first()
     if dup:
         raise HTTPException(status_code=409, detail="Approver already voted on this request")
 
@@ -155,7 +148,7 @@ def submit_vote(request_id: str, vote: ApprovalVoteRequest, db: Session = Depend
 
     if vote.decision == "deny":
         req.status = "denied"
-        req.resolved_at = datetime.now(timezone.utc)
+        req.resolved_at = datetime.now(UTC)
     else:
         req.received_approvals = str(int(req.received_approvals) + 1)
         if int(req.received_approvals) >= int(req.required_approvals):
@@ -166,7 +159,7 @@ def submit_vote(request_id: str, vote: ApprovalVoteRequest, db: Session = Depend
                 scope=req.token_scope,
             )
             req.capability_token = token.signature
-            req.resolved_at = datetime.now(timezone.utc)
+            req.resolved_at = datetime.now(UTC)
 
             trace = db.query(Trace).filter_by(id=req.trace_id).first()
             if trace:
@@ -187,6 +180,7 @@ def submit_vote(request_id: str, vote: ApprovalVoteRequest, db: Session = Depend
                     trace.error = "No response to release"
 
                 from app.services.integrity import cascade_rehash_from_trace
+
                 cascade_rehash_from_trace(db, trace.id)
 
     db.commit()
@@ -196,10 +190,11 @@ def submit_vote(request_id: str, vote: ApprovalVoteRequest, db: Session = Depend
 @router.get("/training/queue")
 def get_labeling_queue(
     status: str = "pending",
-    failure_type: Optional[str] = None,
+    failure_type: str | None = None,
     db: Session = Depends(get_db),
 ):
     """View the labeling queue for training flywheel."""
     from app.core.training.labeler import get_queue
+
     items = get_queue(status=status, failure_type=failure_type, db_session=db)
     return {"items": items, "count": len(items)}

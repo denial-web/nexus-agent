@@ -1,7 +1,9 @@
 """Tests for the training flywheel — labeling, export, and Doctrine Lab bridge."""
+
 from unittest.mock import MagicMock, patch
 
-from app.core.training.labeler import push_failure, label_item, export_for_training
+import pytest
+from app.core.training.labeler import export_for_training, label_item, push_failure
 from app.services.doctrine_bridge import compute_batch_id, is_configured
 
 
@@ -59,7 +61,7 @@ class TestDoctrineLabBridge:
             mock_client_cls.return_value.post.assert_called_once()
 
     def test_import_dataset_raises_on_error(self):
-        from app.services.doctrine_bridge import import_dataset, DoctrineBridgeError
+        from app.services.doctrine_bridge import DoctrineBridgeError, import_dataset
 
         mock_resp = MagicMock()
         mock_resp.status_code = 500
@@ -75,7 +77,7 @@ class TestDoctrineLabBridge:
 
             try:
                 import_dataset([], "batch-err")
-                assert False, "Should have raised"
+                pytest.fail("Should have raised")
             except DoctrineBridgeError as exc:
                 assert exc.status_code == 500
 

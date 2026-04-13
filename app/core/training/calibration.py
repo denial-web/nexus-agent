@@ -9,11 +9,13 @@ ECE = Σ (|bin_count|/N) * |avg_confidence - avg_accuracy| per bin
 
 High ECE means the critic is over- or under-confident and needs recalibration.
 """
+
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +79,7 @@ class ECETracker:
                 )
             )
 
-    def compute_ece(self, node_name: Optional[str] = None) -> CalibrationReport:
+    def compute_ece(self, node_name: str | None = None) -> CalibrationReport:
         with self._lock:
             cutoff = time.time() - self._window_seconds
             active = [r for r in self._records if r.timestamp >= cutoff]
@@ -121,29 +123,35 @@ class ECETracker:
             lo = i * bin_width
             hi = lo + bin_width
             in_bin = [
-                r for r in records if lo <= r.predicted_confidence < hi or (i == self._num_bins - 1 and r.predicted_confidence == 1.0)
+                r
+                for r in records
+                if lo <= r.predicted_confidence < hi or (i == self._num_bins - 1 and r.predicted_confidence == 1.0)
             ]
             if not in_bin:
-                bins.append({
-                    "bin_lo": round(lo, 2),
-                    "bin_hi": round(hi, 2),
-                    "count": 0,
-                    "avg_confidence": 0.0,
-                    "avg_accuracy": 0.0,
-                    "gap": 0.0,
-                })
+                bins.append(
+                    {
+                        "bin_lo": round(lo, 2),
+                        "bin_hi": round(hi, 2),
+                        "count": 0,
+                        "avg_confidence": 0.0,
+                        "avg_accuracy": 0.0,
+                        "gap": 0.0,
+                    }
+                )
                 continue
 
             avg_conf = sum(r.predicted_confidence for r in in_bin) / len(in_bin)
             avg_acc = sum(1.0 for r in in_bin if r.actual_correct) / len(in_bin)
-            bins.append({
-                "bin_lo": round(lo, 2),
-                "bin_hi": round(hi, 2),
-                "count": len(in_bin),
-                "avg_confidence": round(avg_conf, 4),
-                "avg_accuracy": round(avg_acc, 4),
-                "gap": round(abs(avg_conf - avg_acc), 4),
-            })
+            bins.append(
+                {
+                    "bin_lo": round(lo, 2),
+                    "bin_hi": round(hi, 2),
+                    "count": len(in_bin),
+                    "avg_confidence": round(avg_conf, 4),
+                    "avg_accuracy": round(avg_acc, 4),
+                    "gap": round(abs(avg_conf - avg_acc), 4),
+                }
+            )
 
         return bins
 
@@ -168,6 +176,31 @@ _tracker = ECETracker()
 
 def get_ece_tracker() -> ECETracker:
     return _tracker
+
+
+def persist_calibration_snapshot(db_session: Session) -> str | None:
+    """
+    Persist the current in-memory ECE report to calibration_snapshots for durability.
+    Returns the new snapshot id, or None if no samples.
+    """
+    from app.models.training_meta import CalibrationSnapshot
+
+    report = _tracker.compute_ece()
+    if report.num_samples == 0:
+        return None
+
+    snap = CalibrationSnapshot(
+        ece=report.ece,
+        num_samples=report.num_samples,
+        needs_recalibration=report.needs_recalibration,
+        per_node_ece=report.per_node_ece,
+        bins=report.bins,
+    )
+    db_session.add(snap)
+    db_session.commit()
+    db_session.refresh(snap)
+    logger.info("Persisted calibration snapshot id=%s ece=%.4f n=%d", snap.id, report.ece, report.num_samples)
+    return snap.id
 
 
 def record_critic_calibration(

@@ -13,10 +13,11 @@ Injection). It implements the chunked generate-then-verify loop:
 Phase 1: Post-hoc evaluation (evaluate full response after generation).
 Phase 2: Streaming chunked evaluation during generation.
 """
+
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from app.config import settings
 from app.core.llm.models import LLMChunk
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 class CriticNodeProtocol(Protocol):
     """Interface that all leaf nodes must implement."""
+
     name: str
     can_halt: bool
 
@@ -49,7 +51,7 @@ class ArbiterResult:
     verdict: str  # "pass", "rollback", "halt"
     scores: dict  # node_name -> CriticScore
     rollback_count: int
-    halted_by: Optional[str]
+    halted_by: str | None
     unc_inserted: bool
 
 
@@ -95,7 +97,9 @@ class Arbiter:
                     verdict = "halt"
                     logger.warning(
                         "Critic %s HALTED generation (score=%.3f): %s",
-                        name, score.score, score.reasoning,
+                        name,
+                        score.score,
+                        score.reasoning,
                     )
                     break
 
@@ -104,7 +108,9 @@ class Arbiter:
                     self._rollback_count += 1
                     logger.warning(
                         "Critic %s flagged rollback (score=%.3f): %s",
-                        name, score.score, score.reasoning,
+                        name,
+                        score.score,
+                        score.reasoning,
                     )
 
             except Exception:
@@ -143,8 +149,8 @@ class Arbiter:
         accumulated = ""
         chunk_size = settings.CRITIC_CHUNK_SIZE
         words_at_last_eval = 0
-        last_result: Optional[ArbiterResult] = None
-        last_evaluated_snapshot: Optional[str] = None
+        last_result: ArbiterResult | None = None
+        last_evaluated_snapshot: str | None = None
 
         for chunk in chunks:
             accumulated += chunk.text
@@ -205,7 +211,6 @@ class Arbiter:
     @classmethod
     def load_from_registry(cls, db_session: "Session") -> "Arbiter":
         """Build an Arbiter from active `critic_registry` rows; fallback if none."""
-        from app.models.critic_registry import CriticNode as RegistryCriticNode
         from app.core.critic.nodes import (
             InjectionCritic,
             LLMInjectionCritic,
@@ -214,6 +219,7 @@ class Arbiter:
             ReasoningCritic,
             SafetyCritic,
         )
+        from app.models.critic_registry import CriticNode as RegistryCriticNode
 
         rows = (
             db_session.query(RegistryCriticNode)
@@ -267,9 +273,7 @@ class Arbiter:
                             )
                         )
                     else:
-                        arbiter.register_node(
-                            InjectionCritic(name=name, can_halt=row.can_halt)
-                        )
+                        arbiter.register_node(InjectionCritic(name=name, can_halt=row.can_halt))
                 elif nt == "safety":
                     arbiter.register_node(SafetyCritic(name=name, can_halt=row.can_halt))
                 elif nt == "quality":

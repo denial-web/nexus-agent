@@ -6,7 +6,7 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=sqlite:///./nexus.db
+      - DATABASE_URL=sqlite:////app/data/nexus.db
     volumes:
       - nexus-data:/app/data
     restart: unless-stopped

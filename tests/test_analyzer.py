@@ -1,6 +1,7 @@
 """Tests for the A-S-FLC analyzer (LLM path decomposition)."""
+
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from app.core.asflc.analyzer import (
     AnalysisResult,
@@ -15,10 +16,12 @@ class TestLooksTrivial:
         assert _looks_trivial("What is 2+2?") is True
 
     def test_long_prompt_not_trivial(self):
-        assert _looks_trivial(
-            "Explain the differences between supervised and unsupervised "
-            "machine learning approaches in detail"
-        ) is False
+        assert (
+            _looks_trivial(
+                "Explain the differences between supervised and unsupervised machine learning approaches in detail"
+            )
+            is False
+        )
 
     def test_exactly_threshold(self):
         assert _looks_trivial("one two three four five six seven eight") is False

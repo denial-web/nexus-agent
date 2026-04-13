@@ -4,10 +4,11 @@ Critic registry — hot-swappable critic node configurations.
 Stores prompt versions, LoRA adapter paths, and scoring weights for
 each leaf node in the GrokForge-Nexus Arbiter tree.
 """
-import uuid
-from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Index, Integer, JSON, String, Text
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Index, Integer, String, Text
 
 from app.db import Base
 
@@ -38,8 +39,8 @@ class CriticNode(Base):
 
     config = Column(JSON, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     __table_args__ = (
         Index("ix_critic_type", "node_type"),

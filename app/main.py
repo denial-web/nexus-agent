@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import time
@@ -6,25 +7,38 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config as AlembicConfig
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import JSONResponse, Response
 
+from app.api.agent import router as agent_router
+from app.api.critic import router as critic_router
+from app.api.dashboard import router as dashboard_router
+from app.api.governance import router as governance_router
+from app.api.traces import router as traces_router
+from app.api.training import router as training_router
 from app.config import settings
 from app.db import Base, SessionLocal, engine
-from app.middleware import AuthMiddleware, RateLimitMiddleware
-from app.api.agent import router as agent_router
-from app.api.traces import router as traces_router
-from app.api.critic import router as critic_router
-from app.api.governance import router as governance_router
-from app.api.training import router as training_router
-from app.api.dashboard import router as dashboard_router
+from app.middleware import AuthMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+
+def _configure_logging() -> None:
+    level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
+    )
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 _start_time: float = 0.0
@@ -43,6 +57,7 @@ def _run_migrations() -> None:
         except Exception:
             logger.warning("Alembic upgrade failed, falling back to create_all", exc_info=True)
     import app.models  # noqa: F401
+
     Base.metadata.create_all(bind=engine)
     logger.info("Tables created via create_all (Alembic not available)")
 
@@ -179,6 +194,7 @@ async def lifespan(app: FastAPI):
         db.close()
 
     from app.core.training.scheduler import start_scheduler, stop_scheduler
+
     start_scheduler()
 
     yield
@@ -193,8 +209,52 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors = settings.CORS_ORIGINS.strip()
+if _cors:
+    _origins = [o.strip() for o in _cors.split(",") if o.strip()]
+    if _origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(RateLimitMiddleware)
+
+
+def _session_secret_key() -> bytes:
+    raw = settings.SESSION_SECRET.strip() or "dev-nexus-session-not-for-production"
+    return hashlib.sha256(raw.encode()).digest()
+
+
+app.add_middleware(SessionMiddleware, secret_key=_session_secret_key())
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, RequestValidationError):
+        return await request_validation_exception_handler(request, exc)
+    if isinstance(exc, StarletteHTTPException):
+        detail = exc.detail
+        body: dict = {"detail": detail} if isinstance(detail, str) else {"detail": detail}
+        return JSONResponse(status_code=exc.status_code, content=body)
+    logger.exception("Unhandled exception: %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+if settings.EXPOSE_METRICS:
+    try:
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+        @app.get("/metrics")
+        def metrics() -> Response:
+            return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    except ImportError:
+        logger.warning("prometheus_client not installed; /metrics disabled")
 
 
 @app.get("/health")

@@ -1,11 +1,11 @@
 """Tests for the A-S-FLC decision engine."""
-import pytest
 
+import pytest
 from app.core.asflc.engine import (
-    EventNode,
     DecisionPath,
-    evaluate_paths,
+    EventNode,
     build_paths_from_llm_output,
+    evaluate_paths,
 )
 
 
@@ -30,8 +30,8 @@ class TestDecisionPath:
         path = DecisionPath(
             name="test",
             events=[
-                EventNode("good", 0.8, 100, True),     # +80
-                EventNode("bad", 0.2, -50, False),      # -(0.35 * 50) = -17.5
+                EventNode("good", 0.8, 100, True),  # +80
+                EventNode("bad", 0.2, -50, False),  # -(0.35 * 50) = -17.5
             ],
         )
         assert abs(path.chain_score - 62.5) < 0.01

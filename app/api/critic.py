@@ -1,6 +1,6 @@
 """Critic registry management endpoints."""
+
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -15,30 +15,30 @@ router = APIRouter(prefix="/api/critic", tags=["Critic"])
 class CriticNodeCreate(BaseModel):
     name: str
     node_type: str
-    description: Optional[str] = None
-    prompt_template: Optional[str] = None
+    description: str | None = None
+    prompt_template: str | None = None
     weight: float = 1.0
     threshold_pass: float = 0.7
     threshold_halt: float = 0.3
     can_halt: bool = False
-    lora_adapter_path: Optional[str] = None
-    config: Optional[dict] = None
+    lora_adapter_path: str | None = None
+    config: dict | None = None
 
 
 class CriticNodeUpdate(BaseModel):
-    prompt_template: Optional[str] = None
-    weight: Optional[float] = None
-    threshold_pass: Optional[float] = None
-    threshold_halt: Optional[float] = None
-    can_halt: Optional[bool] = None
-    lora_adapter_path: Optional[str] = None
-    is_active: Optional[bool] = None
-    config: Optional[dict] = None
+    prompt_template: str | None = None
+    weight: float | None = None
+    threshold_pass: float | None = None
+    threshold_halt: float | None = None
+    can_halt: bool | None = None
+    lora_adapter_path: str | None = None
+    is_active: bool | None = None
+    config: dict | None = None
 
 
 @router.get("/registry")
 def list_critic_nodes(
-    node_type: Optional[str] = None,
+    node_type: str | None = None,
     active_only: bool = True,
     db: Session = Depends(get_db),
 ):
@@ -81,6 +81,7 @@ def create_critic_node(req: CriticNodeCreate, db: Session = Depends(get_db)):
     db.refresh(node)
 
     from app.agent.pipeline import invalidate_arbiter_cache
+
     invalidate_arbiter_cache()
 
     return {"node": _node_dict(node)}
@@ -106,6 +107,7 @@ def update_critic_node(node_id: str, req: CriticNodeUpdate, db: Session = Depend
     db.refresh(node)
 
     from app.agent.pipeline import invalidate_arbiter_cache
+
     invalidate_arbiter_cache()
 
     return {"node": _node_dict(node)}
