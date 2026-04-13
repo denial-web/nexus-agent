@@ -99,10 +99,14 @@ def pipeline_timer(status: str = "unknown") -> Any:
         PIPELINE_RUNS.labels(status=_status["value"]).inc()
 
 
-def record_critic_scores(scores: dict[str, float]) -> None:
-    for node, score in scores.items():
-        if isinstance(score, (int, float)):
-            CRITIC_SCORES.labels(node=node).observe(score)
+def record_critic_scores(scores: dict) -> None:
+    for node, score_data in scores.items():
+        if isinstance(score_data, (int, float)):
+            CRITIC_SCORES.labels(node=node).observe(score_data)
+        elif hasattr(score_data, "score"):
+            CRITIC_SCORES.labels(node=node).observe(score_data.score)
+        elif isinstance(score_data, dict) and "score" in score_data:
+            CRITIC_SCORES.labels(node=node).observe(score_data["score"])
 
 
 def is_available() -> bool:

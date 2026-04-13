@@ -233,3 +233,119 @@ class TestTrainingAPI:
             json={"model_id": "gpt-4o-mini"},
         )
         assert resp.status_code == 503
+
+    def test_finetune_status_not_configured(self, client):
+        resp = client.get("/api/training/finetune/status/ft-test-123")
+        assert resp.status_code == 503
+
+    def test_finetune_status_success(self, client):
+        mock_status = {"status": "running", "job_id": "ft-test-123"}
+        with (
+            patch(
+                "app.services.doctrine_bridge.get_finetune_job_status",
+                return_value=mock_status,
+            ),
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+        ):
+            resp = client.get("/api/training/finetune/status/ft-test-123")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "running"
+
+    def test_finetune_status_failure_returns_502(self, client):
+        with (
+            patch(
+                "app.services.doctrine_bridge.get_finetune_job_status",
+                side_effect=Exception("connection refused"),
+            ),
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+        ):
+            resp = client.get("/api/training/finetune/status/ft-bad-job")
+            assert resp.status_code == 502
+            assert "connection refused" not in resp.json()["detail"]
+
+    def test_promote_adapter_not_configured(self, client):
+        resp = client.post(
+            "/api/training/promote-adapter",
+            json={"job_id": "ft-x", "node_name": "reasoning"},
+        )
+        assert resp.status_code == 503
+
+    def test_promote_adapter_job_not_ready(self, client):
+        mock_status = {"status": "running"}
+        with (
+            patch(
+                "app.services.doctrine_bridge.get_finetune_job_status",
+                return_value=mock_status,
+            ),
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+        ):
+            resp = client.post(
+                "/api/training/promote-adapter",
+                json={"job_id": "ft-x", "node_name": "reasoning"},
+            )
+            assert resp.status_code == 400
+            assert "promotable" in resp.json()["detail"].lower()
+
+    def test_promote_adapter_success(self, client, db_session):
+        from app.models.critic_registry import CriticNode
+
+        node = db_session.query(CriticNode).filter_by(name="reasoning").first()
+        assert node is not None
+        old_lora = node.lora_adapter_path
+
+        mock_status = {"status": "succeeded", "adapter_path": "/models/lora-v2"}
+        with (
+            patch(
+                "app.services.doctrine_bridge.get_finetune_job_status",
+                return_value=mock_status,
+            ),
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+        ):
+            resp = client.post(
+                "/api/training/promote-adapter",
+                json={"job_id": "ft-done", "node_name": "reasoning"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["promoted"] is True
+            assert data["lora_adapter_path"] == "/models/lora-v2"
+
+        db_session.expire_all()
+        node = db_session.query(CriticNode).filter_by(name="reasoning").first()
+        node.lora_adapter_path = old_lora
+        db_session.commit()
+
+    def test_calibration_persist_no_samples(self, client):
+        from app.core.training.calibration import get_ece_tracker
+
+        tracker = get_ece_tracker()
+        tracker._records.clear()
+
+        resp = client.post("/api/training/calibration/persist")
+        assert resp.status_code == 400
+
+    def test_calibration_persist_with_samples(self, client):
+        from app.core.training.calibration import get_ece_tracker
+
+        tracker = get_ece_tracker()
+        tracker._records.clear()
+        tracker.record(0.9, True, "reasoning", "trace-cal-1")
+        tracker.record(0.7, False, "reasoning", "trace-cal-2")
+
+        resp = client.post("/api/training/calibration/persist")
+        assert resp.status_code == 200
+        assert "snapshot_id" in resp.json()
+
+    def test_calibration_snapshots_endpoint(self, client):
+        from app.core.training.calibration import get_ece_tracker
+
+        tracker = get_ece_tracker()
+        tracker._records.clear()
+        tracker.record(0.8, True, "safety", "trace-cal-3")
+        client.post("/api/training/calibration/persist")
+
+        resp = client.get("/api/training/calibration/snapshots")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "snapshots" in data
+        assert data["count"] >= 1

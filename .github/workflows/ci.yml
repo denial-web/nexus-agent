@@ -49,7 +49,6 @@ jobs:
 
       - name: Dependency audit
         run: pip-audit -r requirements.txt
-        continue-on-error: true
 
       - name: Run tests
         run: pytest tests/ -v --tb=short

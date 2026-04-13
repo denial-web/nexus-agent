@@ -133,29 +133,45 @@ class TestDashboardApprovals:
 
     def test_cast_approve_vote(self, client, db_session):
         db_session.add(
+            Trace(
+                id="t3",
+                session_id="s-approval",
+                prompt="test approval",
+                prompt_hash="abc",
+                immune_verdict="pass",
+                status="pending_approval",
+                response="approved response",
+                model_id="mock",
+            )
+        )
+        db_session.add(
             ApprovalRequest(
                 id="approval-vote-1",
                 trace_id="t3",
                 action_type="api_call",
                 action_payload={},
                 risk_level="high",
-                required_approvals="1",
+                required_approvals="2",
                 received_approvals="0",
                 status="pending",
             )
         )
         db_session.commit()
 
+        client.post(
+            "/dashboard/approvals/approval-vote-1/vote",
+            data={"decision": "approve", "approver_id": "alice"},
+        )
         resp = client.post(
             "/dashboard/approvals/approval-vote-1/vote",
-            data={"decision": "approve", "approver_id": "tester"},
+            data={"decision": "approve", "approver_id": "bob"},
         )
         assert resp.status_code == 200
 
         db_session.expire_all()
         req = db_session.query(ApprovalRequest).filter_by(id="approval-vote-1").first()
         assert req.status == "approved"
-        assert req.received_approvals == "1"
+        assert int(req.received_approvals) == 2
 
     def test_cast_deny_vote(self, client, db_session):
         db_session.add(

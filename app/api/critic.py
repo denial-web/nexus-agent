@@ -120,6 +120,7 @@ def _node_dict(node: Any) -> dict:
         "name": node.name,
         "node_type": node.node_type,
         "description": node.description,
+        "prompt_template": node.prompt_template,
         "prompt_version": node.prompt_version,
         "weight": node.weight,
         "threshold_pass": node.threshold_pass,
@@ -127,6 +128,7 @@ def _node_dict(node: Any) -> dict:
         "can_halt": node.can_halt,
         "lora_adapter_path": node.lora_adapter_path,
         "is_active": node.is_active,
+        "config": node.config,
         "created_at": node.created_at.isoformat() if node.created_at else None,
         "updated_at": node.updated_at.isoformat() if node.updated_at else None,
     }

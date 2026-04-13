@@ -217,7 +217,12 @@ def record_critic_calibration(
     actual_correct = actual_verdict == "pass"
 
     for node_name, score_data in critic_scores.items():
-        confidence = score_data.get("score", 0.0) if isinstance(score_data, dict) else 0.0
+        if hasattr(score_data, "score"):
+            confidence = score_data.score
+        elif isinstance(score_data, dict):
+            confidence = score_data.get("score", 0.0)
+        else:
+            confidence = float(score_data) if isinstance(score_data, (int, float)) else 0.0
         _tracker.record(
             predicted_confidence=confidence,
             actual_correct=actual_correct,

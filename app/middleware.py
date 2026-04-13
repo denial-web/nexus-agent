@@ -1,5 +1,6 @@
 """Security middleware: API key authentication and rate limiting."""
 
+import hmac
 import logging
 import time
 from collections import defaultdict
@@ -43,11 +44,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        if path in _EXEMPT_PATHS or path.startswith("/dashboard") or path.startswith("/static"):
+        if path in _EXEMPT_PATHS or path.startswith("/static"):
             return await call_next(request)
 
+        if path.startswith("/dashboard"):
+            if path == "/dashboard/login":
+                return await call_next(request)
+            if request.session.get("dashboard_authed"):
+                return await call_next(request)
+            if hmac.compare_digest(request.query_params.get("api_key", ""), api_key):
+                request.session["dashboard_authed"] = True
+                return await call_next(request)
+            from starlette.responses import RedirectResponse
+
+            return RedirectResponse(url="/dashboard/login", status_code=302)
+
         provided = request.headers.get("X-API-Key", "")
-        if provided != api_key:
+        if not hmac.compare_digest(provided, api_key):
             logger.warning(
                 "Auth rejected: invalid API key from %s", request.client.host if request.client else "unknown"
             )
@@ -56,11 +69,34 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+_RATE_LIMITED_PATHS: set[str] = {
+    "/api/agent/run",
+    "/api/training/lora/compare",
+    "/api/training/export",
+    "/api/training/finetune",
+    "/api/training/eval",
+    "/api/training/promote-adapter",
+}
+
+_RATE_LIMITED_PREFIXES: tuple[str, ...] = ("/api/traces/",)
+
+
+def _is_rate_limited(path: str, method: str) -> bool:
+    if method != "POST":
+        return False
+    if path in _RATE_LIMITED_PATHS:
+        return True
+    if path.startswith(_RATE_LIMITED_PREFIXES) and path.endswith("/re-evaluate"):
+        return True
+    return False
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Sliding-window rate limiter per client IP.
 
-    Only applied to /api/agent/run. Limit configurable via RATE_LIMIT_RPM.
-    Disabled when RATE_LIMIT_RPM is 0.
+    Applied to expensive POST endpoints: pipeline runs, LoRA comparisons,
+    training exports, fine-tune triggers, and critic re-evaluations.
+    Limit configurable via RATE_LIMIT_RPM. Disabled when RATE_LIMIT_RPM is 0.
 
     NOTE: Timestamps are held in-process memory, so this limiter is only
     accurate for single-worker deployments (uvicorn without --workers).
@@ -82,7 +118,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if rpm <= 0:
             return await call_next(request)
 
-        if request.url.path != "/api/agent/run" or request.method != "POST":
+        if not _is_rate_limited(request.url.path, request.method):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"

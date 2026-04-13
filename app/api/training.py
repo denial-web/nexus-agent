@@ -91,7 +91,13 @@ def export_and_send(req: ExportRequest, db: Session = Depends(get_db)) -> dict:
         is_configured,
     )
 
-    pending_items = db.query(LabelingItem).filter_by(status="labeled", label="correct_flag").limit(req.batch_size).all()
+    pending_items = (
+        db.query(LabelingItem)
+        .filter_by(status="labeled", label="correct_flag")
+        .order_by(LabelingItem.created_at.asc(), LabelingItem.id.asc())
+        .limit(req.batch_size)
+        .all()
+    )
     if not pending_items:
         return {"exported": 0, "batch_id": None, "doctrine_lab": None}
 
@@ -115,7 +121,7 @@ def export_and_send(req: ExportRequest, db: Session = Depends(get_db)) -> dict:
             )
         except Exception as exc:
             logger.warning("Failed to send to Doctrine Lab", exc_info=True)
-            doctrine_result = {"error": str(exc)}
+            doctrine_result = {"error": "Doctrine Lab import failed"}
             try:
                 from app.core.training.outbox import enqueue_failed_import
 
@@ -152,8 +158,8 @@ def submit_eval(req: EvalReportRequest, db: Session = Depends(get_db)) -> dict:
     try:
         result = submit_eval_report(report)
     except Exception as exc:
-        logger.warning("Eval report failed: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.exception("Eval report failed")
+        raise HTTPException(status_code=502, detail="Doctrine Lab eval submission failed") from exc
 
     return result
 
@@ -173,8 +179,8 @@ def trigger_finetune_endpoint(req: FinetuneRequest) -> dict:
             batch_ids=req.batch_ids,
         )
     except Exception as exc:
-        logger.warning("Finetune trigger failed: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.exception("Finetune trigger failed")
+        raise HTTPException(status_code=502, detail="Doctrine Lab finetune trigger failed") from exc
 
     return result
 
@@ -189,8 +195,8 @@ def finetune_job_status(job_id: str) -> dict:
     try:
         return get_finetune_job_status(job_id)
     except Exception as exc:
-        logger.warning("Finetune status failed: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.exception("Finetune status poll failed for job_id=%s", job_id)
+        raise HTTPException(status_code=502, detail="Doctrine Lab status check failed") from exc
 
 
 @router.post("/promote-adapter")
@@ -210,7 +216,8 @@ def promote_adapter_endpoint(req: PromoteAdapterRequest, db: Session = Depends(g
     try:
         status = get_finetune_job_status(req.job_id)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.exception("Promote adapter: status check failed for job_id=%s", req.job_id)
+        raise HTTPException(status_code=502, detail="Doctrine Lab status check failed") from exc
 
     if status.get("skipped"):
         raise HTTPException(status_code=503, detail="Doctrine Lab not configured")
@@ -219,7 +226,7 @@ def promote_adapter_endpoint(req: PromoteAdapterRequest, db: Session = Depends(g
     if job_status not in ("succeeded", "completed", "success"):
         raise HTTPException(
             status_code=400,
-            detail=f"Job not in a promotable state: {job_status or status}",
+            detail=f"Job not in a promotable state: {job_status or 'unknown'}",
         )
 
     adapter = status.get("adapter_path") or status.get("lora_adapter_path") or status.get("output_path")

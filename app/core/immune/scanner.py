@@ -185,6 +185,9 @@ class EscalationTracker:
             if self._cleanup_counter >= 1000:
                 self._cleanup_counter = 0
                 self._evict_stale(now)
+            from app.metrics import ACTIVE_SESSIONS
+
+            ACTIVE_SESSIONS.set(len(self._sessions))
 
     def is_escalated(self, session_id: str) -> bool:
         with self._lock:

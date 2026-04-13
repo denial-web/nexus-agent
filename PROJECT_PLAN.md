@@ -32,7 +32,7 @@ Build a production-grade AI agent system that merges a **Zero-Trust Agent Pipeli
 | **A-S-FLC** | Asymmetric Signed Force-Loop-Chain — risk-penalized decision engine | ✅ Complete (Phase 5) |
 | **Covernor** | Default-deny policy engine, ECDSA tokens, K-of-N approval | ✅ Complete (Phase 4) |
 | **GrokForge-Nexus v16** | Arbiter critic tree, chunked generate-then-verify, auto-rollback | ✅ Complete (Phase 2) |
-| **Nexus Spin v5.3** | Lightweight causal transformer with memory loops, bilingual Khmer support | Future — local model integration |
+| **Nexus Spin v5.3** | Lightweight causal transformer with memory loops, bilingual Khmer support | ✅ Complete — local HuggingFace provider via `model_id: local:repo/name` |
 | **a-s-flc-decisions** | 806 structured A-S-FLC reasoning examples on HuggingFace | ✅ Import script ready (Phase 5) |
 
 ---
@@ -139,7 +139,8 @@ Build a production-grade AI agent system that merges a **Zero-Trust Agent Pipeli
 
 ### Models
 - **Nexus Spin v5.3**: Lightweight causal transformer with memory loops and bilingual Khmer support
-  - Integrate as a local model option in Phase 6
+  - Integrated as local model option via `model_id: local:repo/name` or `nexus-spin-v5.3`
+  - Cached model/tokenizer loading, stub fallback when `transformers`/`torch` not installed
   - Use Unsloth + LoRA for fine-tuning
 
 ### Supported LLM Providers (Phase 2+)
@@ -233,11 +234,12 @@ Failure traces awaiting human review for the training flywheel.
 
 ---
 
-## API Reference (23 endpoints)
+## API Reference (29 endpoints)
 
-### Health (`app/main.py`)
+### Health & Observability (`app/main.py`)
 - `GET /health` — Liveness check (app name, version)
 - `GET /health/ready` — Readiness check (DB connectivity, uptime)
+- `GET /metrics` — Prometheus metrics (pipeline latency, run counts, LLM errors, critic scores, queue depth)
 
 ### Agent (`app/api/agent.py`)
 - `POST /api/agent/run` — Execute full pipeline. Body: `{"prompt": "...", "session_id": "optional", "model_id": "optional"}`
@@ -259,7 +261,7 @@ Failure traces awaiting human review for the training flywheel.
 - `POST /api/governance/policies` — Create policy
 - `GET /api/governance/approvals` — List approval requests. Query: `?status=pending`
 - `POST /api/governance/approve/{request_id}` — Submit vote. Body: `{"approver_id": "...", "decision": "approve|deny", "reason": "optional"}`
-- `GET /api/governance/training/queue` — View labeling queue (alias)
+- `GET /api/governance/training/queue` — View labeling queue (alias of `GET /api/training/queue`; kept for backward compatibility)
 
 ### Training (`app/api/training.py`)
 - `GET /api/training/queue` — View labeling queue. Query: `?status=&failure_type=`
@@ -267,12 +269,16 @@ Failure traces awaiting human review for the training flywheel.
 - `POST /api/training/export` — Export labeled items (optionally push to Doctrine Lab)
 - `POST /api/training/eval` — Submit evaluation report to Doctrine Lab
 - `POST /api/training/finetune` — Trigger fine-tuning job via Doctrine Lab
+- `GET /api/training/finetune/status/{job_id}` — Poll fine-tune job status from Doctrine Lab
+- `POST /api/training/promote-adapter` — Promote completed LoRA adapter to a critic node. Body: `{"job_id": "...", "node_name": "..."}`
 - `GET /api/training/calibration` — ECE calibration report. Query: `?node_name=`
+- `POST /api/training/calibration/persist` — Persist current in-memory ECE metrics to DB
+- `GET /api/training/calibration/snapshots` — List persisted ECE snapshots. Query: `?limit=20`
 - `POST /api/training/lora/compare` — Compare critic before/after LoRA adapter swap
 
 ---
 
-## Testing — 252 tests across 18 files
+## Testing — 291 tests across 18 files
 
 - All tests in `tests/` directory
 - Fixtures in `tests/conftest.py` (test DB, session, TestClient)
@@ -296,8 +302,11 @@ Failure traces awaiting human review for the training flywheel.
 | `test_re_evaluate.py` | Critic replay, drift detection, 404 handling |
 | `test_governance.py` | Full approval workflow, expiry, hash chain verification |
 | `test_integrity.py` | Hash-chain computation and tamper detection |
-| `test_training.py` | Doctrine Lab bridge, labeling flow, export, training API |
+| `test_training.py` | Doctrine Lab bridge, labeling flow, export, training API, finetune status, adapter promotion, calibration |
 | `test_advanced_training.py` | ECE calibration, evidential enrichment, scheduler |
+| `test_middleware.py` | API key auth, rate limiting, dashboard auth (login/logout/session) |
+| `test_dashboard_csrf.py` | CSRF token validation for dashboard POST forms |
+| `test_e2e.py` | Full pipeline lifecycle, hash chain, labeling+export, error atomicity, critic halt, approvals, metrics |
 
 ---
 
@@ -311,8 +320,15 @@ uvicorn app.main:app --reload --port 9000
 # Tests
 pytest tests/ -v --tb=short
 
-# Lint
+# Lint & format
 ruff check app/ tests/
+ruff format --check app/ tests/
+
+# Type checking (strict)
+mypy app/
+
+# Dependency audit
+pip-audit -r requirements.txt
 
 # New migration after model changes
 alembic revision --autogenerate -m "description"

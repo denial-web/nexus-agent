@@ -55,8 +55,8 @@ def evaluate_action(
     for policy in policies:
         if not _matches(policy.action_pattern, action_type):
             continue
-        if policy.resource_pattern and resource:
-            if not _matches(policy.resource_pattern, resource):
+        if policy.resource_pattern:
+            if not resource or not _matches(policy.resource_pattern, resource):
                 continue
 
         if parameters and policy.blocked_parameters:

@@ -2,6 +2,7 @@
 LoRA comparison, and scheduled export."""
 
 import time
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -91,19 +92,57 @@ class TestECETracker:
 
 
 class TestRecordCriticCalibration:
-    def test_records_from_scores(self):
+    def test_records_from_dict_scores(self):
         tracker = get_ece_tracker()
+        tracker._records.clear()
         scores = {
             "reasoning": {"score": 0.85, "verdict": "pass"},
             "safety": {"score": 0.92, "verdict": "pass"},
         }
         record_critic_calibration(scores, "pass", "trace-1")
+        assert tracker.record_count >= 2
+
+    def test_records_from_critic_score_dataclass(self):
+        from app.core.critic.arbiter import CriticScore
+
+        tracker = get_ece_tracker()
+        tracker._records.clear()
+        scores = {
+            "reasoning": CriticScore(
+                node_name="reasoning", score=0.88, verdict="pass", reasoning="ok"
+            ),
+            "safety": CriticScore(
+                node_name="safety", score=0.75, verdict="pass", reasoning="safe"
+            ),
+        }
+        record_critic_calibration(scores, "pass", "trace-cs-1")
         assert tracker.record_count == 2
+        report = tracker.compute_ece()
+        assert report.num_samples == 2
+        non_empty_bins = [b for b in report.bins if b["count"] > 0]
+        assert len(non_empty_bins) > 0
 
     def test_halt_marked_incorrect(self):
         tracker = get_ece_tracker()
+        tracker._records.clear()
         scores = {"safety": {"score": 0.2, "verdict": "fail"}}
         record_critic_calibration(scores, "halt", "trace-2")
+        report = tracker.compute_ece()
+        assert report.num_samples == 1
+        bin_with_data = [b for b in report.bins if b["count"] > 0]
+        assert bin_with_data[0]["avg_accuracy"] == 0.0
+
+    def test_halt_with_critic_score_dataclass(self):
+        from app.core.critic.arbiter import CriticScore
+
+        tracker = get_ece_tracker()
+        tracker._records.clear()
+        scores = {
+            "safety": CriticScore(
+                node_name="safety", score=0.15, verdict="fail", reasoning="unsafe"
+            ),
+        }
+        record_critic_calibration(scores, "halt", "trace-cs-halt")
         report = tracker.compute_ece()
         assert report.num_samples == 1
         bin_with_data = [b for b in report.bins if b["count"] > 0]
@@ -297,3 +336,236 @@ class TestExportWithEvidential:
         ev = matching[0]["evidential"]
         assert "suggested_weight" in ev
         assert ev["critic_verdict"] is not None
+
+
+class TestDoctrineOutbox:
+    def test_enqueue_creates_pending_row(self, db_session):
+        from app.core.training.outbox import enqueue_failed_import
+        from app.models.training_meta import DoctrineOutbox
+
+        oid = enqueue_failed_import(
+            db_session,
+            batch_id="batch-outbox-1",
+            dataset_type="agent_safety",
+            items=[{"messages": [{"role": "user", "content": "test"}]}],
+            error_message="Connection refused",
+        )
+        row = db_session.query(DoctrineOutbox).filter_by(id=oid).first()
+        assert row is not None
+        assert row.status == "pending"
+        assert row.attempts == 0
+        assert row.batch_id == "batch-outbox-1"
+        assert row.next_retry_at is not None
+
+    def test_enqueue_truncates_long_error(self, db_session):
+        from app.core.training.outbox import enqueue_failed_import
+        from app.models.training_meta import DoctrineOutbox
+
+        long_error = "x" * 10000
+        oid = enqueue_failed_import(
+            db_session,
+            batch_id="batch-outbox-trunc",
+            dataset_type="agent_safety",
+            items=[],
+            error_message=long_error,
+        )
+        row = db_session.query(DoctrineOutbox).filter_by(id=oid).first()
+        assert len(row.last_error) <= 4000
+
+    def test_process_retries_not_configured(self, db_session):
+        from app.core.training.outbox import process_outbox_retries
+
+        with patch("app.services.doctrine_bridge.is_configured", return_value=False):
+            result = process_outbox_retries(db_session)
+        assert result["retried"] == 0
+        assert result["reason"] == "doctrine_not_configured"
+
+    def test_process_retries_sends_successfully(self, db_session):
+        from app.core.training.outbox import enqueue_failed_import, process_outbox_retries
+        from app.models.training_meta import DoctrineOutbox
+
+        oid = enqueue_failed_import(
+            db_session,
+            batch_id="batch-retry-ok",
+            dataset_type="agent_safety",
+            items=[{"messages": []}],
+            error_message="initial failure",
+        )
+
+        row = db_session.query(DoctrineOutbox).filter_by(id=oid).first()
+        row.next_retry_at = datetime.now(UTC) - timedelta(seconds=1)
+        db_session.commit()
+
+        with (
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+            patch(
+                "app.services.doctrine_bridge.import_dataset",
+                return_value={"imported": 1},
+            ),
+        ):
+            result = process_outbox_retries(db_session)
+
+        assert result["succeeded"] == 1
+        db_session.expire_all()
+        row = db_session.query(DoctrineOutbox).filter_by(id=oid).first()
+        assert row.status == "sent"
+
+    def test_process_retries_increments_attempts_on_failure(self, db_session):
+        from app.core.training.outbox import enqueue_failed_import, process_outbox_retries
+        from app.models.training_meta import DoctrineOutbox
+
+        oid = enqueue_failed_import(
+            db_session,
+            batch_id="batch-retry-fail",
+            dataset_type="agent_safety",
+            items=[],
+            error_message="original error",
+        )
+
+        row = db_session.query(DoctrineOutbox).filter_by(id=oid).first()
+        row.next_retry_at = datetime.now(UTC) - timedelta(seconds=1)
+        db_session.commit()
+
+        with (
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+            patch(
+                "app.services.doctrine_bridge.import_dataset",
+                side_effect=Exception("still broken"),
+            ),
+        ):
+            process_outbox_retries(db_session)
+
+        db_session.expire_all()
+        row = db_session.query(DoctrineOutbox).filter_by(id=oid).first()
+        assert row.attempts == 1
+        assert row.status == "pending"
+        assert row.next_retry_at is not None
+
+    def test_process_retries_dead_letters_after_max_attempts(self, db_session):
+        from app.core.training.outbox import _MAX_ATTEMPTS, enqueue_failed_import, process_outbox_retries
+        from app.models.training_meta import DoctrineOutbox
+
+        oid = enqueue_failed_import(
+            db_session,
+            batch_id="batch-dead",
+            dataset_type="agent_safety",
+            items=[],
+            error_message="persistent failure",
+        )
+
+        row = db_session.query(DoctrineOutbox).filter_by(id=oid).first()
+        row.attempts = _MAX_ATTEMPTS - 1
+        row.next_retry_at = datetime.now(UTC) - timedelta(seconds=1)
+        db_session.commit()
+
+        with (
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+            patch(
+                "app.services.doctrine_bridge.import_dataset",
+                side_effect=Exception("final failure"),
+            ),
+        ):
+            process_outbox_retries(db_session)
+
+        db_session.expire_all()
+        row = db_session.query(DoctrineOutbox).filter_by(id=oid).first()
+        assert row.status == "dead"
+        assert row.attempts == _MAX_ATTEMPTS
+        assert row.next_retry_at is None
+
+    def test_process_retries_skips_future_rows(self, db_session):
+        from app.core.training.outbox import enqueue_failed_import, process_outbox_retries
+
+        enqueue_failed_import(
+            db_session,
+            batch_id="batch-future",
+            dataset_type="agent_safety",
+            items=[],
+            error_message="not yet",
+        )
+
+        with (
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+            patch(
+                "app.services.doctrine_bridge.import_dataset",
+            ) as mock_import,
+        ):
+            result = process_outbox_retries(db_session)
+
+        assert result["retried"] == 0
+        mock_import.assert_not_called()
+
+
+class TestRecordCriticScoresMetric:
+    """Verify record_critic_scores handles CriticScore dataclasses, dicts, and floats."""
+
+    def test_critic_score_dataclass(self):
+        from unittest.mock import MagicMock
+
+        from app.core.critic.arbiter import CriticScore
+        from app.metrics import record_critic_scores
+
+        scores = {
+            "reasoning": CriticScore(
+                node_name="reasoning", score=0.92, verdict="pass", reasoning="ok"
+            ),
+            "safety": CriticScore(
+                node_name="safety", score=0.45, verdict="warn", reasoning="meh"
+            ),
+        }
+        import app.metrics as m
+
+        orig = m.CRITIC_SCORES
+        mock_hist = MagicMock()
+        m.CRITIC_SCORES = mock_hist
+        try:
+            record_critic_scores(scores)
+            assert mock_hist.labels.call_count == 2
+            observed_values = [
+                call.args[0]
+                for call in mock_hist.labels.return_value.observe.call_args_list
+            ]
+            assert 0.92 in observed_values
+            assert 0.45 in observed_values
+        finally:
+            m.CRITIC_SCORES = orig
+
+    def test_plain_float_scores(self):
+        from unittest.mock import MagicMock
+
+        from app.metrics import record_critic_scores
+
+        scores = {"reasoning": 0.8, "safety": 0.6}
+        import app.metrics as m
+
+        orig = m.CRITIC_SCORES
+        mock_hist = MagicMock()
+        m.CRITIC_SCORES = mock_hist
+        try:
+            record_critic_scores(scores)
+            assert mock_hist.labels.call_count == 2
+        finally:
+            m.CRITIC_SCORES = orig
+
+    def test_dict_scores(self):
+        from unittest.mock import MagicMock
+
+        from app.metrics import record_critic_scores
+
+        scores = {"reasoning": {"score": 0.77}, "safety": {"score": 0.33}}
+        import app.metrics as m
+
+        orig = m.CRITIC_SCORES
+        mock_hist = MagicMock()
+        m.CRITIC_SCORES = mock_hist
+        try:
+            record_critic_scores(scores)
+            assert mock_hist.labels.call_count == 2
+            observed = [
+                call.args[0]
+                for call in mock_hist.labels.return_value.observe.call_args_list
+            ]
+            assert 0.77 in observed
+            assert 0.33 in observed
+        finally:
+            m.CRITIC_SCORES = orig

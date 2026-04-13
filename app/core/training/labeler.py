@@ -130,6 +130,9 @@ def export_for_training(
     Only exports items with status='labeled' and label='correct_flag'.
     Marks exported items so they aren't re-exported.
 
+    Uses deterministic ordering (created_at ASC, id ASC) so callers computing
+    batch_id from a pre-query get the same rows this function exports.
+
     If batch_id is provided, uses it for idempotency; otherwise generates one.
     If enrich_evidential is True, attaches uncertainty metadata from the trace.
     """
@@ -138,7 +141,13 @@ def export_for_training(
 
     from app.models.labeling_queue import LabelingItem
 
-    items = db_session.query(LabelingItem).filter_by(status="labeled", label="correct_flag").limit(batch_size).all()
+    items = (
+        db_session.query(LabelingItem)
+        .filter_by(status="labeled", label="correct_flag")
+        .order_by(LabelingItem.created_at.asc(), LabelingItem.id.asc())
+        .limit(batch_size)
+        .all()
+    )
 
     if not batch_id:
         batch_id = uuid.uuid4().hex[:12]

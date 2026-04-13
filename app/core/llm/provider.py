@@ -22,6 +22,7 @@ from typing import Any
 
 from app.config import settings
 from app.core.llm.models import LLMChunk, LLMResponse
+from app.metrics import LLM_CALLS, LLM_ERRORS
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +381,8 @@ def generate(
     if route_provider == "mock":
         return _mock_response(prompt, start)
 
+    LLM_CALLS.labels(provider=route_provider).inc()
+
     if route_provider == "local":
         text, used_model, token_count, raw = _call_local_hf(prompt, resolved_model, system_prompt)
         latency_ms = (time.perf_counter() - start) * 1000
@@ -412,6 +415,7 @@ def generate(
             )
         except Exception as exc:
             last_error = exc
+            LLM_ERRORS.labels(provider=route_provider, error_type=type(exc).__name__).inc()
             logger.warning(
                 "LLM %s attempt %s/%s failed: %s",
                 route_provider,

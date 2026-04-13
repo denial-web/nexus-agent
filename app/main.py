@@ -57,6 +57,9 @@ def _run_migrations() -> None:
             logger.info("Alembic migrations applied successfully")
             return
         except Exception:
+            if settings.ENVIRONMENT.lower() not in ("development", "dev", "test"):
+                logger.error("Alembic upgrade failed in production — refusing to fall back to create_all")
+                raise
             logger.warning("Alembic upgrade failed, falling back to create_all", exc_info=True)
     import app.models  # noqa: F401
 
@@ -80,7 +83,7 @@ def _seed_default_policies(db: Session) -> None:
             decision="allow",
             risk_level="low",
             required_approvals="0",
-            priority="10",
+            priority=10,
         ),
         Policy(
             name="approve-file-write",
@@ -90,7 +93,7 @@ def _seed_default_policies(db: Session) -> None:
             decision="require_approval",
             risk_level="high",
             required_approvals="2",
-            priority="50",
+            priority=50,
         ),
         Policy(
             name="approve-external-api",
@@ -100,7 +103,7 @@ def _seed_default_policies(db: Session) -> None:
             decision="require_approval",
             risk_level="high",
             required_approvals="2",
-            priority="50",
+            priority=50,
         ),
         Policy(
             name="deny-fund-transfer",
@@ -110,7 +113,7 @@ def _seed_default_policies(db: Session) -> None:
             decision="deny",
             risk_level="critical",
             required_approvals="0",
-            priority="1",
+            priority=1,
         ),
     ]
 
@@ -182,10 +185,28 @@ def _seed_default_critics(db: Session) -> None:
     logger.info("Seeded %d default critic registry nodes", len(defaults))
 
 
+def _validate_production_config() -> None:
+    """Warn about insecure defaults that are acceptable in dev but not production."""
+    env = settings.ENVIRONMENT.lower()
+    if env in ("development", "dev", "test"):
+        return
+    if not settings.NEXUS_API_KEY.strip():
+        logger.warning(
+            "NEXUS_API_KEY is empty — all API endpoints are unauthenticated. "
+            "Set NEXUS_API_KEY for production deployments."
+        )
+    if not settings.SESSION_SECRET.strip():
+        logger.warning(
+            "SESSION_SECRET is empty — dashboard sessions use a hardcoded key. "
+            "Set SESSION_SECRET for production deployments."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _start_time
     _start_time = time.time()
+    _validate_production_config()
     _run_migrations()
 
     db = SessionLocal()
@@ -229,8 +250,13 @@ app.add_middleware(RateLimitMiddleware)
 
 
 def _session_secret_key() -> bytes:
-    raw = settings.SESSION_SECRET.strip() or "dev-nexus-session-not-for-production"
-    return hashlib.sha256(raw.encode()).digest()
+    if not settings.SESSION_SECRET.strip():
+        if settings.ENVIRONMENT.lower() not in ("development", "dev", "test"):
+            raise RuntimeError(
+                "SESSION_SECRET must be set in non-development environments. "
+                'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))"'
+            )
+    return hashlib.sha256(settings.get_session_secret().encode()).digest()
 
 
 app.add_middleware(SessionMiddleware, secret_key=_session_secret_key())
@@ -265,22 +291,26 @@ def health_check() -> dict:
 
 
 @app.get("/health/ready")
-def readiness_check() -> dict:
+def readiness_check() -> Response:
     db_ok = False
     try:
         db = SessionLocal()
-        db.execute(text("SELECT 1"))
-        db.close()
-        db_ok = True
+        try:
+            db.execute(text("SELECT 1"))
+            db_ok = True
+        finally:
+            db.close()
     except Exception:
         logger.warning("Readiness: database unreachable", exc_info=True)
 
     uptime = round(time.time() - _start_time, 1) if _start_time else 0
-    return {
+    body = {
         "status": "ready" if db_ok else "degraded",
         "database": "connected" if db_ok else "unreachable",
         "uptime_seconds": uptime,
     }
+    status_code = 200 if db_ok else 503
+    return JSONResponse(content=body, status_code=status_code)
 
 
 app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")

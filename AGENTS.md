@@ -73,7 +73,7 @@ app/
 - **Pydantic v2** — use `model_config = ConfigDict(...)`, not `class Config`
 - **SQLAlchemy 2.0** style — `Column()`, `declarative_base()`
 - **Logging** — `logger = logging.getLogger(__name__)`, never `print()`
-- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 252 tests across 18 test files.
+- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 291 tests across 18 test files.
 - **Alembic** — `render_as_batch=True` for SQLite, migrations auto-generated
 
 ## Pipeline Flow (app/agent/pipeline.py)
@@ -95,7 +95,7 @@ Prompt
 
 ## Current State — All Phases Complete
 
-**252 passing tests** across 18 test files.
+**291 passing tests** across 18 test files.
 
 **Completed phases:**
 - **Phase 1**: Foundation — pipeline, models, immune scanner, arbiter, governance, tests
@@ -129,5 +129,13 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 - **Memory-based detection**: Blocked attacks are added to the Semantic Memory Bank for fuzzy-matching future attempts.
 - **Session escalation**: Repeated suspicious prompts in the same session accumulate score until the session is auto-blocked.
 
+
+## Operational Notes
+
+- **Persist failure**: If the DB commit fails after LLM generation, the client gets a 500 and no trace is recorded. Monitor logs for `"Failed to persist trace"` — repeated occurrences indicate database connectivity or disk-space issues.
+- **Rate limiting**: Applied to all expensive POST endpoints (`/api/agent/run`, `/api/training/lora/compare`, `/api/training/export`, etc.). Configurable via `RATE_LIMIT_RPM`. In-process memory only — use Redis for multi-worker deployments.
+- **Dashboard auth**: When `NEXUS_API_KEY` is set, `/dashboard` requires login via the API key. Session-based after first login. Unauthenticated in development mode.
+- **SESSION_SECRET**: Must be set in non-development environments. The app refuses to start without it. Generate with: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+- **Prometheus metrics**: Available at `GET /metrics` when `EXPOSE_METRICS=True` and `prometheus_client` is installed. Tracks pipeline latency, run counts by status, LLM call/error rates, critic scores, and labeling queue depth.
 
 See `PROJECT_PLAN.md` for full phase details, database schema reference, and API endpoint documentation.

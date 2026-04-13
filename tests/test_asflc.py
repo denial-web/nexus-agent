@@ -76,6 +76,22 @@ class TestEvaluatePaths:
         result = evaluate_paths(paths)
         assert result.chain_regret == 0.0
 
+    def test_empty_paths_returns_safe_default(self):
+        result = evaluate_paths([])
+        assert result.chosen_path == "none"
+        assert result.loops_taken == 0
+        assert result.converged is True
+        assert result.all_paths == {}
+
+    def test_max_loops_zero_still_evaluates(self, monkeypatch):
+        monkeypatch.setattr("app.config.settings.ASFLC_MAX_LOOPS", 0)
+        paths = [
+            DecisionPath("a", [EventNode("x", 0.5, 50, True)]),
+        ]
+        result = evaluate_paths(paths)
+        assert result.chosen_path == "a"
+        assert result.loops_taken >= 1
+
     def test_all_paths_in_result(self):
         paths = [
             DecisionPath("a", [EventNode("x", 0.5, 50, True)]),

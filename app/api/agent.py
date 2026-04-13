@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import get_db
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,13 @@ def run_agent(req: RunRequest, db: Session = Depends(get_db)) -> dict:
 
     if not req.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+
+    max_len = settings.MAX_PROMPT_LENGTH
+    if max_len > 0 and len(req.prompt) > max_len:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Prompt exceeds maximum length of {max_len} characters",
+        )
 
     result = run(
         prompt=req.prompt,

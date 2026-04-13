@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     NEXUS_API_KEY: str = ""
     RATE_LIMIT_RPM: int = 30
+    MAX_PROMPT_LENGTH: int = 50_000
 
     # Comma-separated origins; empty = CORS middleware not installed (same-origin only)
     CORS_ORIGINS: str = ""
@@ -49,6 +50,12 @@ class Settings(BaseSettings):
     # Dashboard — session signing (always set in production)
     SESSION_SECRET: str = ""
     ENFORCE_DASHBOARD_CSRF: bool = False
+
+    _DEV_SESSION_SECRET: str = "dev-nexus-session-not-for-production"
+
+    def get_session_secret(self) -> str:
+        """Return the configured session secret, or dev fallback in dev/test."""
+        return self.SESSION_SECRET.strip() or self._DEV_SESSION_SECRET
 
 
 settings = Settings()

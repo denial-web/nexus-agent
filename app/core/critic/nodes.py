@@ -316,8 +316,8 @@ class _LLMCriticBase:
 
         try:
             user_prompt = self.prompt_template.format(prompt=prompt, response=response)
-        except KeyError as exc:
-            logger.warning("%s template missing key: %s", self.__class__.__name__, exc)
+        except (KeyError, ValueError, IndexError) as exc:
+            logger.warning("%s template error: %s", self.__class__.__name__, exc)
             return CriticScore(
                 node_name=self.name,
                 score=h.score,

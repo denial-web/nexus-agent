@@ -8,7 +8,7 @@ and what is blocked outright. Unknown actions are denied by default.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Index, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String, Text
 
 from app.db import Base
 
@@ -34,7 +34,7 @@ class Policy(Base):
     allowed_parameters = Column(JSON, nullable=True)
     blocked_parameters = Column(JSON, nullable=True)
 
-    priority = Column(String, nullable=False, default="100")
+    priority = Column(Integer, nullable=False, default=100)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))

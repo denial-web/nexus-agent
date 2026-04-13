@@ -69,7 +69,7 @@ def _seed_test_policies(session):
             decision="allow",
             risk_level="low",
             required_approvals="0",
-            priority="10",
+            priority=10,
         )
     )
     session.commit()

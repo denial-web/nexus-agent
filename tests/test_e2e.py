@@ -144,7 +144,7 @@ class TestApprovalWorkflow:
             decision="require_approval",
             risk_level="high",
             required_approvals="1",
-            priority="01",
+            priority=1,
         )
         db_session.add(policy)
         db_session.commit()
@@ -191,11 +191,24 @@ class TestDashboardE2E:
         resp = client.get("/health/ready")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] in ("ready", "degraded")
-        assert "database" in data
+        assert data["status"] == "ready"
+        assert data["database"] == "connected"
         assert "uptime_seconds" in data
+
+    def test_readiness_returns_503_on_db_failure(self, client):
+        with patch("app.main.SessionLocal") as mock_session_cls:
+            mock_session_cls.side_effect = Exception("connection refused")
+            resp = client.get("/health/ready")
+        assert resp.status_code == 503
+        assert resp.json()["status"] == "degraded"
 
     def test_calibration_page_loads(self, client):
         resp = client.get("/dashboard/calibration")
         assert resp.status_code == 200
         assert "calibration" in resp.text.lower() or "ECE" in resp.text
+
+    def test_metrics_endpoint(self, client):
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+        body = resp.text
+        assert "nexus_pipeline_runs_total" in body or "text/plain" in resp.headers.get("content-type", "")

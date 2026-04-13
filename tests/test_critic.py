@@ -190,6 +190,22 @@ class TestLLMReasoningCritic:
         mock_gen.assert_not_called()
 
 
+    def test_malformed_template_falls_back_to_heuristic(self):
+        c = LLMReasoningCritic(
+            name="reasoning",
+            prompt_template="Evaluate {prompt} and {response} with {bad_brace",
+            threshold_pass=0.7,
+            threshold_halt=0.3,
+        )
+        response = (
+            "Because there are several factors to consider, however "
+            "the situation is complex and therefore requires careful analysis."
+        )
+        r = c.evaluate({"prompt": "explain this", "response": response, "model_id": "mock"})
+        assert r.details.get("source") == "heuristic_fallback"
+        assert "template_error" in r.reasoning
+
+
 class TestLLMInjectionCritic:
     @patch("app.core.critic.nodes.generate")
     def test_llm_json_parsed(self, mock_gen):
@@ -291,3 +307,118 @@ class TestArbiterLoadFromRegistry:
         assert "injection" in arbiter.active_nodes
         assert "safety" in arbiter.active_nodes
         assert "quality" in arbiter.active_nodes
+
+
+class TestCriticRegistryAPI:
+    def test_list_nodes(self, client):
+        resp = client.get("/api/critic/registry")
+        assert resp.status_code == 200
+        assert "nodes" in resp.json()
+        assert len(resp.json()["nodes"]) >= 4
+
+    def test_create_node(self, client, db_session):
+        from app.models.critic_registry import CriticNode
+
+        resp = client.post(
+            "/api/critic/registry",
+            json={
+                "name": "test-custom-node",
+                "node_type": "heuristic",
+                "description": "A test critic node",
+                "weight": 0.5,
+                "threshold_pass": 0.8,
+                "threshold_halt": 0.2,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["node"]["name"] == "test-custom-node"
+        assert data["node"]["node_type"] == "heuristic"
+
+        node = db_session.query(CriticNode).filter_by(name="test-custom-node").first()
+        if node:
+            db_session.delete(node)
+            db_session.commit()
+
+    def test_create_duplicate_node_rejected(self, client):
+        resp = client.post(
+            "/api/critic/registry",
+            json={"name": "reasoning", "node_type": "heuristic"},
+        )
+        assert resp.status_code == 409
+
+    def test_create_node_returns_prompt_template_and_config(self, client, db_session):
+        from app.models.critic_registry import CriticNode
+
+        resp = client.post(
+            "/api/critic/registry",
+            json={
+                "name": "test-fields-node",
+                "node_type": "heuristic",
+                "prompt_template": "Evaluate: {prompt}\n{response}",
+                "config": {"max_tokens": 128},
+            },
+        )
+        assert resp.status_code == 200
+        node_data = resp.json()["node"]
+        assert node_data["prompt_template"] == "Evaluate: {prompt}\n{response}"
+        assert node_data["config"] == {"max_tokens": 128}
+
+        node = db_session.query(CriticNode).filter_by(name="test-fields-node").first()
+        if node:
+            db_session.delete(node)
+            db_session.commit()
+
+    def test_patch_node_updates_fields(self, client, db_session):
+        from app.models.critic_registry import CriticNode
+
+        node = db_session.query(CriticNode).filter_by(name="reasoning").first()
+        assert node is not None
+        original_weight = node.weight
+        original_version = node.prompt_version
+
+        resp = client.patch(
+            f"/api/critic/registry/{node.id}",
+            json={
+                "weight": 0.42,
+                "prompt_template": "Updated template: {prompt}",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()["node"]
+        assert data["weight"] == 0.42
+        assert data["prompt_template"] == "Updated template: {prompt}"
+        assert data["prompt_version"] == original_version + 1
+
+        db_session.expire_all()
+        node = db_session.query(CriticNode).filter_by(name="reasoning").first()
+        node.weight = original_weight
+        node.prompt_template = None
+        node.prompt_version = original_version
+        db_session.commit()
+
+    def test_patch_nonexistent_node_404(self, client):
+        resp = client.patch(
+            "/api/critic/registry/nonexistent-id",
+            json={"weight": 0.5},
+        )
+        assert resp.status_code == 404
+
+    def test_patch_without_template_does_not_bump_version(self, client, db_session):
+        from app.models.critic_registry import CriticNode
+
+        node = db_session.query(CriticNode).filter_by(name="safety").first()
+        original_version = node.prompt_version
+        original_halt = node.can_halt
+
+        resp = client.patch(
+            f"/api/critic/registry/{node.id}",
+            json={"can_halt": not original_halt},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["node"]["prompt_version"] == original_version
+
+        db_session.expire_all()
+        node = db_session.query(CriticNode).filter_by(name="safety").first()
+        node.can_halt = original_halt
+        db_session.commit()

@@ -25,7 +25,7 @@ from app.core.immune.scanner import Verdict, harden_prompt, scan_input, scan_out
 from app.core.llm.provider import generate
 from app.core.training.calibration import record_critic_calibration
 from app.core.training.labeler import push_failure
-from app.metrics import PIPELINE_RUNS, record_critic_scores
+from app.metrics import PIPELINE_LATENCY, PIPELINE_RUNS, record_critic_scores
 
 logger = logging.getLogger(__name__)
 
@@ -170,8 +170,9 @@ def run(
         critic_result = arbiter.evaluate({**critic_ctx, "response": response})
     except Exception as exc:
         logger.exception("Pipeline LLM or critic evaluation failed: trace_id=%s", trace_id)
+        internal_error = str(exc) or type(exc).__name__
         result.status = "error"
-        result.error = str(exc) or type(exc).__name__
+        result.error = "Pipeline processing failed"
         result.latency_ms = _elapsed(start)
         if db_session:
             _push_pipeline_failure(
@@ -180,7 +181,7 @@ def run(
                 failure_type="pipeline_error",
                 prompt=prompt,
                 response=None,
-                detail={"stage": "llm_or_critic", "error": result.error},
+                detail={"stage": "llm_or_critic", "error": internal_error},
                 db_session=db_session,
             )
         _persist_trace(result, prompt, db_session)
@@ -308,7 +309,13 @@ def run(
 
 
 def _persist_trace(result: PipelineResult, prompt: str, db_session: Session | None) -> None:
-    """Write trace to the audit log."""
+    """Write trace to the audit log.
+
+    If the commit fails, the exception propagates to the caller and the client
+    receives a 500 with no trace record persisted. The LLM work is lost.
+    Operators should monitor for "Failed to persist trace" log entries; repeated
+    occurrences indicate a database connectivity or disk-space issue.
+    """
     if not db_session:
         return
 
@@ -421,6 +428,8 @@ def _push_critic_failure(
 
 def _record_run(result: PipelineResult) -> None:
     PIPELINE_RUNS.labels(status=result.status).inc()
+    if result.latency_ms:
+        PIPELINE_LATENCY.labels(status=result.status).observe(result.latency_ms / 1000.0)
 
 
 def _elapsed(start: float) -> float:

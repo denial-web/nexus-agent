@@ -81,9 +81,21 @@ def evaluate_paths(paths: list[DecisionPath]) -> ASFLCResult:
     Loops until all path scores are stable (delta < threshold)
     or max iterations are reached.
     """
-    max_loops = settings.ASFLC_MAX_LOOPS
+    if not paths:
+        return ASFLCResult(
+            chosen_path="none",
+            chosen_score=0.0,
+            confidence=0.0,
+            loops_taken=0,
+            all_paths={},
+            converged=True,
+            chain_regret=0.0,
+        )
+
+    max_loops = max(settings.ASFLC_MAX_LOOPS, 1)
     threshold = settings.ASFLC_CONVERGENCE_THRESHOLD
     converged = False
+    loop = 0
 
     for loop in range(1, max_loops + 1):
         for path in paths:

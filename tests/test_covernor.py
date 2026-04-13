@@ -29,6 +29,38 @@ class TestPolicyEngine:
         assert result.decision == "deny"
         assert "No matching policy" in result.reason
 
+    def test_resource_scoped_policy_requires_resource(self, db_session):
+        """A policy with resource_pattern must NOT match when resource is omitted."""
+        from app.models.policy import Policy
+
+        db_session.add(
+            Policy(
+                name="scoped-to-chat",
+                action_pattern="respond",
+                resource_pattern="chat",
+                decision="allow",
+                risk_level="low",
+                required_approvals="0",
+                priority=1,
+            )
+        )
+        db_session.commit()
+
+        try:
+            with_resource = evaluate_action("respond", resource="chat", db_session=db_session)
+            assert with_resource.decision == "allow"
+
+            without_resource = evaluate_action("respond", resource=None, db_session=db_session)
+            assert without_resource.decision == "deny"
+
+            empty_resource = evaluate_action("respond", resource="", db_session=db_session)
+            assert empty_resource.decision == "deny"
+        finally:
+            p = db_session.query(Policy).filter_by(name="scoped-to-chat").first()
+            if p:
+                db_session.delete(p)
+                db_session.commit()
+
 
 class TestTokenManager:
     def test_issue_and_verify(self):

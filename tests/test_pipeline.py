@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 from app.agent.pipeline import run
+from app.config import settings
 from app.core.critic.arbiter import ArbiterResult
 from app.models.policy import Policy
 
@@ -180,7 +181,7 @@ class TestPipeline:
             result = run("hello", db_session=db_session)
 
         assert result.status == "error"
-        assert "provider unavailable" in (result.error or "")
+        assert result.error == "Pipeline processing failed"
 
         from app.models.labeling_queue import LabelingItem
         from app.models.trace import Trace
@@ -200,7 +201,7 @@ class TestPipeline:
             decision="require_approval",
             risk_level="high",
             required_approvals="2",
-            priority="01",
+            priority=1,
         )
         db_session.add(p)
         db_session.commit()
@@ -270,6 +271,22 @@ class TestPipelineAPI:
     def test_empty_prompt_rejected(self, client):
         resp = client.post("/api/agent/run", json={"prompt": ""})
         assert resp.status_code == 400
+
+    def test_oversized_prompt_rejected(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "MAX_PROMPT_LENGTH", 100)
+        resp = client.post("/api/agent/run", json={"prompt": "x" * 101})
+        assert resp.status_code == 413
+        assert "maximum length" in resp.json()["detail"]
+
+    def test_prompt_within_limit_accepted(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "MAX_PROMPT_LENGTH", 100)
+        resp = client.post("/api/agent/run", json={"prompt": "x" * 100})
+        assert resp.status_code == 200
+
+    def test_prompt_limit_disabled_when_zero(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "MAX_PROMPT_LENGTH", 0)
+        resp = client.post("/api/agent/run", json={"prompt": "x" * 100_000})
+        assert resp.status_code == 200
 
     def test_traces_endpoint(self, client):
         client.post("/api/agent/run", json={"prompt": "Hello"})

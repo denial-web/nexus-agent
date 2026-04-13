@@ -14,7 +14,7 @@ from starlette.responses import Response
 from app.config import settings
 from app.core.training.calibration import get_ece_tracker
 from app.db import get_db
-from app.models.approval_log import ApprovalRequest, ApprovalVote
+from app.models.approval_log import ApprovalRequest
 from app.models.labeling_queue import LabelingItem
 from app.models.trace import Trace
 
@@ -29,8 +29,7 @@ _CSRF_MAX_AGE = 3600
 
 
 def _csrf_key() -> bytes:
-    raw = settings.SESSION_SECRET.strip() or "dev-csrf-not-for-production"
-    return hashlib.sha256(raw.encode()).digest()
+    return hashlib.sha256(("csrf:" + settings.get_session_secret()).encode()).digest()
 
 
 def _issue_csrf(request: Request) -> str | None:
@@ -56,6 +55,28 @@ def _csrf_valid(request: Request, form_token: str | None) -> bool:
         return 0 <= age <= _CSRF_MAX_AGE
     except ValueError:
         return False
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request) -> Response:
+    """Show login form (only relevant when NEXUS_API_KEY is set)."""
+    return templates.TemplateResponse(request, "login.html", {"error": None})
+
+
+@router.post("/login")
+def login_submit(request: Request, api_key: str = Form(...)) -> Response:
+    """Validate API key and set session flag."""
+    expected = settings.NEXUS_API_KEY.strip()
+    if not expected or hmac.compare_digest(api_key, expected):
+        request.session["dashboard_authed"] = True
+        return RedirectResponse(url="/dashboard", status_code=303)
+    return templates.TemplateResponse(request, "login.html", {"error": "Invalid API key"}, status_code=403)
+
+
+@router.get("/logout")
+def logout(request: Request) -> Response:
+    request.session.clear()
+    return RedirectResponse(url="/dashboard/login", status_code=302)
 
 
 @router.get("", response_class=HTMLResponse)
@@ -170,32 +191,16 @@ def cast_vote(
     if not _csrf_valid(request, csrf_token):
         return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
 
-    approval = db.query(ApprovalRequest).filter(ApprovalRequest.id == request_id).first()
-    if not approval or approval.status != "pending":
-        return RedirectResponse(url="/dashboard/approvals", status_code=303)
+    from app.services.approval import process_vote
 
-    vote = ApprovalVote(
+    result = process_vote(
         request_id=request_id,
         approver_id=approver_id,
         decision=decision,
+        db=db,
     )
-    db.add(vote)
-
-    current = int(approval.received_approvals)
-    required = int(approval.required_approvals)
-
-    if decision == "approve":
-        current += 1
-        approval.received_approvals = str(current)
-        if current >= required:
-            approval.status = "approved"
-            approval.resolved_at = datetime.now(UTC)
-    elif decision == "deny":
-        approval.status = "denied"
-        approval.resolved_at = datetime.now(UTC)
-
-    db.commit()
-    logger.info("Vote on %s: %s by %s", request_id, decision, approver_id)
+    if result.error:
+        logger.warning("Dashboard vote failed on %s: %s", request_id, result.error)
 
     return RedirectResponse(url="/dashboard/approvals", status_code=303)
 

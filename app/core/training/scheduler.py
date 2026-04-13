@@ -31,7 +31,13 @@ def _run_export_cycle() -> dict:
 
         outbox_stats = process_outbox_retries(db)
 
-        pending = db.query(LabelingItem).filter_by(status="labeled", label="correct_flag").limit(100).all()
+        pending = (
+            db.query(LabelingItem)
+            .filter_by(status="labeled", label="correct_flag")
+            .order_by(LabelingItem.created_at.asc(), LabelingItem.id.asc())
+            .limit(100)
+            .all()
+        )
         if not pending:
             from app.core.training.calibration import persist_calibration_snapshot
 
