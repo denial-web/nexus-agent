@@ -111,10 +111,74 @@ class TestDashboardAuth:
         after = client.get("/dashboard", follow_redirects=False)
         assert after.status_code == 302
 
-    def test_api_key_query_param_grants_access(self, client, monkeypatch):
+    def test_query_param_no_longer_grants_access(self, client, monkeypatch):
         monkeypatch.setattr(settings, "NEXUS_API_KEY", "secret-key-123")
         resp = client.get("/dashboard?api_key=secret-key-123", follow_redirects=False)
-        assert resp.status_code == 200
+        assert resp.status_code == 302
+        assert "/dashboard/login" in resp.headers.get("location", "")
+
+
+class TestMetricsAuth:
+    def test_metrics_requires_auth_when_key_set(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "secret-key-123")
+        resp = client.get("/metrics")
+        assert resp.status_code == 401
+
+    def test_metrics_accessible_with_key(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "secret-key-123")
+        resp = client.get("/metrics", headers={"X-API-Key": "secret-key-123"})
+        assert resp.status_code in (200, 404)
+
+    def test_metrics_open_when_no_key(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "")
+        resp = client.get("/metrics")
+        assert resp.status_code in (200, 404)
+
+
+class TestProductionConfig:
+    def test_prod_requires_api_key(self, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "")
+        monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+        from app.main import _validate_production_config
+
+        with pytest.raises(RuntimeError, match="NEXUS_API_KEY must be set"):
+            _validate_production_config()
+
+    def test_prod_ok_with_api_key(self, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "my-secret")
+        monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+        from app.main import _validate_production_config
+
+        _validate_production_config()
+
+    def test_dev_allows_empty_api_key(self, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "")
+        monkeypatch.setattr(settings, "ENVIRONMENT", "development")
+        from app.main import _validate_production_config
+
+        _validate_production_config()
+
+
+class TestSafeKeyCompare:
+    def test_matching_keys(self):
+        from app.middleware import _safe_key_compare
+
+        assert _safe_key_compare("secret", "secret") is True
+
+    def test_different_keys(self):
+        from app.middleware import _safe_key_compare
+
+        assert _safe_key_compare("wrong", "secret") is False
+
+    def test_different_length_keys(self):
+        from app.middleware import _safe_key_compare
+
+        assert _safe_key_compare("s", "very-long-secret-key-here") is False
+
+    def test_empty_vs_nonempty(self):
+        from app.middleware import _safe_key_compare
+
+        assert _safe_key_compare("", "secret") is False
 
 
 class TestRateLimitMiddleware:
@@ -170,3 +234,10 @@ class TestRateLimitMiddleware:
             mock_time.time.return_value = 9999999999.0
             resp = client.post("/api/agent/run", json={"prompt": "after window"})
             assert resp.status_code == 200
+
+    def test_login_is_rate_limited(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "RATE_LIMIT_RPM", 2)
+        client.post("/dashboard/login", data={"api_key": "wrong1"})
+        client.post("/dashboard/login", data={"api_key": "wrong2"})
+        resp = client.post("/dashboard/login", data={"api_key": "wrong3"})
+        assert resp.status_code == 429

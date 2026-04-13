@@ -62,6 +62,33 @@ class TestPolicyEngine:
                 db_session.commit()
 
 
+    def test_corrupt_required_approvals_defaults_to_deny(self, db_session):
+        from app.models.policy import Policy
+
+        db_session.add(
+            Policy(
+                name="corrupt-approvals",
+                action_pattern="respond",
+                resource_pattern="chat",
+                decision="allow",
+                risk_level="low",
+                required_approvals="not-a-number",
+                priority=1,
+            )
+        )
+        db_session.commit()
+
+        try:
+            result = evaluate_action("respond", resource="chat", db_session=db_session)
+            assert result.decision == "deny"
+            assert "Corrupt" in result.reason
+        finally:
+            p = db_session.query(Policy).filter_by(name="corrupt-approvals").first()
+            if p:
+                db_session.delete(p)
+                db_session.commit()
+
+
 class TestTokenManager:
     def test_issue_and_verify(self):
         token = issue_token(trace_id="t1", action_type="respond", scope={"max_tokens": 100})
@@ -80,7 +107,7 @@ class TestTokenManager:
 
         valid, reason = verify_and_consume(token.token_id)
         assert valid is False
-        assert "already consumed" in reason
+        assert "not found" in reason.lower()
 
     def test_unknown_token(self):
         valid, reason = verify_and_consume("nonexistent")

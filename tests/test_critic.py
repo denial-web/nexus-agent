@@ -130,6 +130,51 @@ class TestArbiter:
         arbiter.reset()
         assert arbiter._rollback_count == 0
 
+    def test_exception_in_halt_capable_node_triggers_halt(self):
+        arbiter = Arbiter()
+
+        class _CrashingNode:
+            name = "crasher"
+            can_halt = True
+
+            def evaluate(self, context):
+                raise RuntimeError("node crashed")
+
+        arbiter.register_node(_CrashingNode())
+        result = arbiter.evaluate({"prompt": "test", "response": "ok"})
+        assert result.verdict == "halt"
+        assert result.halted_by == "crasher:exception"
+        assert "crasher" in result.scores
+        assert result.scores["crasher"]["verdict"] == "fail"
+        assert result.scores["crasher"]["score"] == 0.0
+
+    def test_exception_in_non_halt_node_triggers_rollback(self):
+        arbiter = Arbiter()
+
+        class _CrashingNode:
+            name = "soft-crasher"
+            can_halt = False
+
+            def evaluate(self, context):
+                raise ValueError("oops")
+
+        arbiter.register_node(_CrashingNode())
+        arbiter.register_node(QualityCritic())
+        good_response = json.dumps({"a": "detailed " * 20, "b": 2, "c": 3})
+        result = arbiter.evaluate({"prompt": "test", "response": good_response})
+        assert result.verdict == "rollback"
+        assert result.rollback_count >= 1
+        assert "soft-crasher" in result.scores
+
+    def test_get_node_weights(self):
+        arbiter = Arbiter()
+        arbiter.register_node(ReasoningCritic())
+        arbiter.register_node(SafetyCritic())
+        weights = arbiter.get_node_weights()
+        assert "reasoning" in weights
+        assert "safety" in weights
+        assert all(isinstance(v, float) for v in weights.values())
+
 
 class TestLLMReasoningCritic:
     @patch("app.core.critic.nodes.generate")
@@ -188,7 +233,6 @@ class TestLLMReasoningCritic:
         r = c.evaluate({"prompt": "p", "response": payload})
         assert r.details.get("source") == "heuristic_highconf"
         mock_gen.assert_not_called()
-
 
     def test_malformed_template_falls_back_to_heuristic(self):
         c = LLMReasoningCritic(

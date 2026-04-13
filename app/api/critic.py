@@ -41,10 +41,15 @@ class CriticNodeUpdate(BaseModel):
 def list_critic_nodes(
     node_type: str | None = None,
     active_only: bool = True,
+    limit: int = 100,
+    offset: int = 0,
     db: Session = Depends(get_db),
 ) -> dict:
     """List registered critic nodes."""
     from app.models.critic_registry import CriticNode
+
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
 
     q = db.query(CriticNode)
     if node_type:
@@ -52,7 +57,7 @@ def list_critic_nodes(
     if active_only:
         q = q.filter_by(is_active=True)
 
-    nodes = q.order_by(CriticNode.node_type, CriticNode.name).all()
+    nodes = q.order_by(CriticNode.node_type, CriticNode.name).offset(offset).limit(limit).all()
     return {"nodes": [_node_dict(n) for n in nodes]}
 
 

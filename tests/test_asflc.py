@@ -122,3 +122,43 @@ class TestBuildPaths:
     def test_handles_empty(self):
         paths = build_paths_from_llm_output([])
         assert paths == []
+
+    def test_malformed_events_not_dicts(self):
+        raw = [{"name": "bad", "events": ["not a dict", 42, None]}]
+        paths = build_paths_from_llm_output(raw)
+        assert len(paths) == 1
+        assert len(paths[0].events) == 0  # non-dict events are skipped
+
+    def test_malformed_probability_string(self):
+        raw = [
+            {
+                "name": "bad",
+                "events": [{"description": "x", "probability": "high", "impact": "big", "is_positive": True}],
+            },
+        ]
+        paths = build_paths_from_llm_output(raw)
+        assert len(paths) == 1
+        assert len(paths[0].events) == 0  # unconvertible values are skipped
+
+
+class TestAnalyzerFallback:
+    def test_analyze_falls_back_on_malformed_paths(self):
+        from unittest.mock import patch
+
+        from app.core.asflc.analyzer import analyze
+        from app.core.llm.models import LLMResponse
+
+        bad_json = '[{"name": "A", "events": [1]}, {"name": "B", "events": [2]}]'
+        mock_resp = LLMResponse(text=bad_json, model_id="mock", token_count=10, latency_ms=0.0, provider="mock")
+
+        with (
+            patch("app.core.llm.provider.generate", return_value=mock_resp),
+            patch(
+                "app.core.asflc.analyzer.build_paths_from_llm_output",
+                side_effect=TypeError("bad event data"),
+            ),
+        ):
+                result = analyze("This is a long enough prompt to avoid trivial skip for analysis")
+
+        assert result is not None
+        assert result.chosen_path in ("direct_response", "cautious_response")

@@ -73,6 +73,10 @@ class Arbiter:
     def active_nodes(self) -> list[str]:
         return list(self._nodes.keys())
 
+    def get_node_weights(self) -> dict[str, float]:
+        """Return {node_name: weight} for all registered nodes."""
+        return {name: getattr(node, "weight", 1.0) for name, node in self._nodes.items()}
+
     def evaluate(self, context: dict) -> ArbiterResult:
         """
         Run all registered leaf nodes on the given context.
@@ -121,6 +125,12 @@ class Arbiter:
                     verdict="fail",
                     reasoning="Node raised an exception",
                 )
+                if node.can_halt:
+                    halted_by = f"{name}:exception"
+                    verdict = "halt"
+                    break
+                verdict = "rollback"
+                self._rollback_count += 1
 
         if self._rollback_count > settings.CRITIC_MAX_ROLLBACKS and verdict == "rollback":
             verdict = "halt"
@@ -142,10 +152,10 @@ class Arbiter:
         *new* words (or on the final chunk). Inserts [UNC] on rollback, halts
         if max rollbacks exceeded.
 
-        Rollback counting is managed here — evaluate() still increments
-        _rollback_count as a side-effect, but evaluate_stream checks the limit
-        after each batch.
+        Resets rollback state at entry so a reused Arbiter instance does not
+        carry over counts from prior evaluations.
         """
+        self._rollback_count = 0
         accumulated = ""
         chunk_size = settings.CRITIC_CHUNK_SIZE
         words_at_last_eval = 0

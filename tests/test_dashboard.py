@@ -106,6 +106,31 @@ class TestDashboardLabeling:
         assert item.label == "false_positive"
 
 
+    def test_apply_invalid_label_rejected(self, client, db_session):
+        db_session.add(
+            LabelingItem(
+                id="label-item-invalid",
+                trace_id="t-inv",
+                source_node="reasoning",
+                failure_type="reasoning",
+                prompt="test",
+                critic_output={},
+                status="pending",
+            )
+        )
+        db_session.commit()
+
+        resp = client.post(
+            "/dashboard/labeling/label-item-invalid/label",
+            data={"label": "garbage_value"},
+        )
+        assert resp.status_code == 400
+
+        db_session.expire_all()
+        item = db_session.query(LabelingItem).filter_by(id="label-item-invalid").first()
+        assert item.status == "pending"
+
+
 class TestDashboardApprovals:
     def test_approvals_page_loads(self, client):
         resp = client.get("/dashboard/approvals")
@@ -197,6 +222,16 @@ class TestDashboardApprovals:
         db_session.expire_all()
         req = db_session.query(ApprovalRequest).filter_by(id="approval-deny-1").first()
         assert req.status == "denied"
+
+
+    def test_vote_on_nonexistent_request_returns_error(self, client):
+        resp = client.post(
+            "/dashboard/approvals/nonexistent-req/vote",
+            data={"decision": "approve", "approver_id": "tester"},
+            follow_redirects=False,
+        )
+        assert resp.status_code >= 400
+        assert "Vote failed" in resp.text
 
 
 class TestDashboardCalibration:

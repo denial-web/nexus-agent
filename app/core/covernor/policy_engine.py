@@ -72,13 +72,31 @@ def evaluate_action(
                         reason=f"Blocked parameter: {blocked_key}",
                     )
 
+        try:
+            approvals = int(policy.required_approvals)
+        except (ValueError, TypeError):
+            logger.error(
+                "Policy %s has non-integer required_approvals=%r — defaulting to deny",
+                policy.name,
+                policy.required_approvals,
+            )
+            return PolicyDecision(
+                action=action_type,
+                decision="deny",
+                policy_id=policy.id,
+                policy_name=policy.name,
+                risk_level=policy.risk_level,
+                required_approvals=0,
+                reason=f"Corrupt required_approvals in policy: {policy.name}",
+            )
+
         return PolicyDecision(
             action=action_type,
             decision=policy.decision,
             policy_id=policy.id,
             policy_name=policy.name,
             risk_level=policy.risk_level,
-            required_approvals=int(policy.required_approvals),
+            required_approvals=approvals,
             reason=f"Matched policy: {policy.name}",
         )
 

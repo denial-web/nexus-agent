@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import time
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse, Response
@@ -27,20 +29,10 @@ from app.api.traces import router as traces_router
 from app.api.training import router as training_router
 from app.config import settings
 from app.db import Base, SessionLocal, engine
+from app.logging_config import configure_logging, request_id_var
 from app.middleware import AuthMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
 
-
-def _configure_logging() -> None:
-    level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        force=True,
-    )
-
-
-_configure_logging()
+configure_logging()
 logger = logging.getLogger(__name__)
 
 _start_time: float = 0.0
@@ -186,20 +178,40 @@ def _seed_default_critics(db: Session) -> None:
 
 
 def _validate_production_config() -> None:
-    """Warn about insecure defaults that are acceptable in dev but not production."""
+    """Enforce security requirements in non-dev environments."""
     env = settings.ENVIRONMENT.lower()
     if env in ("development", "dev", "test"):
         return
     if not settings.NEXUS_API_KEY.strip():
-        logger.warning(
-            "NEXUS_API_KEY is empty — all API endpoints are unauthenticated. "
-            "Set NEXUS_API_KEY for production deployments."
+        raise RuntimeError(
+            "NEXUS_API_KEY must be set in non-development environments. "
+            "All API endpoints are unauthenticated without it."
         )
     if not settings.SESSION_SECRET.strip():
         logger.warning(
             "SESSION_SECRET is empty — dashboard sessions use a hardcoded key. "
             "Set SESSION_SECRET for production deployments."
         )
+    logger.warning(
+        "Multi-worker note: Rate limiting, capability tokens, and the training "
+        "scheduler use in-process memory. For multi-worker deployments (uvicorn "
+        "--workers >1), use an external store (Redis) for rate limits and tokens, "
+        "and ensure only one worker runs the scheduler."
+    )
+
+
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    """Assign a unique request ID to every request for log correlation."""
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:16]
+        token = request_id_var.set(rid)
+        try:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = rid
+            return response
+        finally:
+            request_id_var.reset(token)
 
 
 @asynccontextmanager
@@ -218,11 +230,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     from app.core.training.scheduler import start_scheduler, stop_scheduler
 
-    start_scheduler()
+    _skip_scheduler = os.environ.get("NEXUS_SKIP_SCHEDULER", "").strip().lower() in ("1", "true", "yes")
+    if _skip_scheduler:
+        logger.info("Scheduler disabled via NEXUS_SKIP_SCHEDULER — this worker will not run background jobs")
+    else:
+        start_scheduler()
 
     yield
 
-    stop_scheduler()
+    if not _skip_scheduler:
+        stop_scheduler()
 
 
 app = FastAPI(
@@ -247,6 +264,7 @@ if _cors:
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(RequestIdMiddleware)
 
 
 def _session_secret_key() -> bytes:

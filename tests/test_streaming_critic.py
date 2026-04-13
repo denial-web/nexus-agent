@@ -93,6 +93,24 @@ def test_evaluate_stream_inserts_unc_marker(monkeypatch):
     assert result.unc_inserted is True or result.rollback_count > 0
 
 
+def test_evaluate_stream_resets_stale_rollback_count(monkeypatch):
+    """A reused Arbiter should not carry over _rollback_count into evaluate_stream."""
+    monkeypatch.setattr(settings, "CRITIC_CHUNK_SIZE", 1)
+    monkeypatch.setattr(settings, "CRITIC_MAX_ROLLBACKS", 3)
+
+    arbiter = Arbiter()
+    arbiter.register_node(ReasoningCritic())
+    arbiter._rollback_count = 100
+
+    payload = json.dumps({"analysis": "x" * 20, "b": 2, "c": 3, "d": 4})
+    result = arbiter.evaluate_stream(
+        {"prompt": "p", "model_id": "m", "trace_id": "t"},
+        _split_chunks(payload),
+    )
+    assert result.verdict == "pass"
+    assert result.rollback_count < 100
+
+
 def test_evaluate_stream_word_counter_resets(monkeypatch):
     """
     With chunk_size=10, a 30-word response in 3 chunks of 10 words each

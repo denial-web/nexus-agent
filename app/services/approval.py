@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -46,7 +47,7 @@ def process_vote(
             http_status=422,
         )
 
-    req = db.query(ApprovalRequest).filter_by(id=request_id).first()
+    req = db.query(ApprovalRequest).filter_by(id=request_id).with_for_update().first()
     if not req:
         return VoteResult(
             status="error",
@@ -119,6 +120,9 @@ def process_vote(
             trace = db.query(Trace).filter_by(id=req.trace_id).first()
             if not trace:
                 logger.error("Trace %s missing for approval %s — refusing to issue token", req.trace_id, request_id)
+                received -= 1
+                req.received_approvals = str(received)
+                db.delete(vote)
                 db.commit()
                 return VoteResult(
                     status="error",
@@ -155,6 +159,17 @@ def process_vote(
 
             cascade_rehash_from_trace(db, trace.id)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        logger.warning("Duplicate vote attempt by %s on %s (caught by DB constraint)", approver_id, request_id)
+        return VoteResult(
+            status="error",
+            received=req.received_approvals,
+            required=req.required_approvals,
+            error="Approver already voted on this request",
+            http_status=409,
+        )
     logger.info("Vote on %s: %s by %s → %s", request_id, decision, approver_id, req.status)
     return VoteResult(status=req.status, received=req.received_approvals, required=req.required_approvals)

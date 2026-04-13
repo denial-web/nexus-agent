@@ -5,10 +5,20 @@ from unittest.mock import patch
 from app.agent.pipeline import run
 from app.config import settings
 from app.core.critic.arbiter import ArbiterResult
+from app.core.immune.scanner import ScanResult, Verdict
 from app.models.policy import Policy
 
 
 class TestPipeline:
+    def test_harden_empty_blocks(self, db_session):
+        flagged = ScanResult(verdict=Verdict.FLAG, score=0.3, triggers=["injection:test"])
+        with patch("app.agent.pipeline.scan_input", return_value=flagged):
+            with patch("app.agent.pipeline.harden_prompt", return_value=("", ["all content"])):
+                result = run("bad prompt", db_session=db_session)
+        assert result.status == "blocked"
+        assert "entirely composed" in result.error
+        assert result.immune_input.get("hardened_empty") is True
+
     def test_clean_prompt_completes(self, db_session):
         result = run("What is 2+2?", db_session=db_session)
         assert result.status == "completed"
@@ -329,3 +339,11 @@ class TestPipelineAPI:
         assert data["session_id"] == sid
         assert data["valid"] is True
         assert data["problems"] == []
+
+    def test_get_trace_404(self, client):
+        resp = client.get("/api/traces/nonexistent-trace-xyz")
+        assert resp.status_code == 404
+
+    def test_replay_trace_404(self, client):
+        resp = client.get("/api/traces/nonexistent-trace-xyz/replay")
+        assert resp.status_code == 404

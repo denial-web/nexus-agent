@@ -160,6 +160,57 @@ def test_create_policy(client, db_session):
         db_session.commit()
 
 
+def test_create_policy_duplicate_name_rejected(client, db_session):
+    payload = {
+        "name": "dupe-policy-test",
+        "action_pattern": "respond",
+        "resource_pattern": "*",
+        "decision": "allow",
+        "risk_level": "low",
+        "required_approvals": 0,
+        "priority": 500,
+    }
+    resp1 = client.post("/api/governance/policies", json=payload)
+    assert resp1.status_code == 200
+
+    resp2 = client.post("/api/governance/policies", json=payload)
+    assert resp2.status_code == 409
+    assert "already exists" in resp2.json()["detail"]
+
+    from app.models.policy import Policy
+
+    p = db_session.query(Policy).filter_by(name="dupe-policy-test").first()
+    if p:
+        db_session.delete(p)
+        db_session.commit()
+
+
+def test_create_policy_invalid_decision_rejected(client):
+    resp = client.post(
+        "/api/governance/policies",
+        json={
+            "name": "bad-decision",
+            "action_pattern": "respond",
+            "decision": "maybe",
+            "risk_level": "low",
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_create_policy_invalid_risk_level_rejected(client):
+    resp = client.post(
+        "/api/governance/policies",
+        json={
+            "name": "bad-risk",
+            "action_pattern": "respond",
+            "decision": "allow",
+            "risk_level": "extreme",
+        },
+    )
+    assert resp.status_code == 422
+
+
 def test_list_policies(client):
     resp = client.get("/api/governance/policies")
     assert resp.status_code == 200
@@ -250,6 +301,12 @@ def test_approval_refuses_without_trace(client, db_session):
     ar = db_session.query(AR).filter_by(id="orphan-req-1").first()
     assert ar.status == "pending"
     assert ar.capability_token is None
+    assert int(ar.received_approvals) == 1
+
+    from app.models.approval_log import ApprovalVote
+
+    votes = db_session.query(ApprovalVote).filter_by(request_id="orphan-req-1", approver_id="alice").all()
+    assert len(votes) == 0
 
 
 def test_approval_quorum_floor(client, db_session, monkeypatch):

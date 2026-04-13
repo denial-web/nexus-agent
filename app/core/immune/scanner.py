@@ -232,18 +232,7 @@ def get_escalation_tracker() -> EscalationTracker:
 
 # ── Prompt Hardener ────────────────────────────────────────────────
 
-_HARDENING_REMOVALS = [
-    re.compile(p, re.IGNORECASE)
-    for p in [
-        r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|rules|prompts)[.\s]*",
-        r"you\s+are\s+now\s+(DAN|evil|jailbroken|unrestricted)[.\s]*",
-        r"\bDAN\s+mode\b[.\s]*",
-        r"system\s*:\s*you\s+are[^.]*[.\s]*",
-        r"override\s+(safety|content)\s+(filters?|policies)[.\s]*",
-        r"act\s+as\s+if\s+(you\s+have\s+)?no\s+(restrictions|rules|limits)[.\s]*",
-        r"do\s+not\s+follow\s+(your|the)\s+(rules|guidelines)[.\s]*",
-    ]
-]
+_HARDENING_REMOVALS = [re.compile(p + r"[.\s]*", re.IGNORECASE) for p in INJECTION_PATTERNS]
 
 
 def harden_prompt(prompt: str) -> tuple[str, list[str]]:

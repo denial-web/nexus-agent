@@ -12,7 +12,8 @@ import logging
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Generator
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -20,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core.covernor.policy_engine import evaluate_action
-from app.core.critic.arbiter import Arbiter
+from app.core.critic.arbiter import Arbiter, CriticScore
 from app.core.immune.scanner import Verdict, harden_prompt, scan_input, scan_output
 from app.core.llm.provider import generate
 from app.core.training.calibration import record_critic_calibration
@@ -28,6 +29,19 @@ from app.core.training.labeler import push_failure
 from app.metrics import PIPELINE_LATENCY, PIPELINE_RUNS, record_critic_scores
 
 logger = logging.getLogger(__name__)
+
+def _serialize_scores(scores: dict) -> dict:
+    """Convert CriticScore dataclass objects to JSON-safe dicts."""
+    out = {}
+    for k, v in scores.items():
+        if isinstance(v, CriticScore):
+            out[k] = asdict(v)
+        elif isinstance(v, dict):
+            out[k] = v
+        else:
+            out[k] = {"score": float(v)} if isinstance(v, (int, float)) else str(v)
+    return out
+
 
 _ARBITER_TTL_SECONDS = 60
 _arbiter_cache: Arbiter | None = None
@@ -127,10 +141,29 @@ def run(
 
     if input_scan.verdict == Verdict.FLAG:
         hardened, removed = harden_prompt(prompt)
-        if removed and hardened.strip():
-            prompt = hardened
-            result.immune_input["hardened"] = True
-            result.immune_input["removed_fragments"] = removed
+        if removed:
+            if hardened.strip():
+                prompt = hardened
+                result.immune_input["hardened"] = True
+                result.immune_input["removed_fragments"] = removed
+            else:
+                result.status = "blocked"
+                result.error = "Prompt entirely composed of flagged content"
+                result.immune_input["hardened_empty"] = True
+                result.latency_ms = _elapsed(start)
+                if db_session:
+                    _push_pipeline_failure(
+                        trace_id=trace_id,
+                        source_node="immune",
+                        failure_type="injection",
+                        prompt=prompt,
+                        response=None,
+                        detail={"stage": "input_hardening_empty", "immune_input": result.immune_input},
+                        db_session=db_session,
+                    )
+                _persist_trace(result, prompt, db_session)
+                _record_run(result)
+                return result
 
     # ── Step 2: A-S-FLC decision analysis ─────────────────
     system_hint: str | None = None
@@ -188,9 +221,10 @@ def run(
         _record_run(result)
         return result
 
+    serialized_scores = _serialize_scores(critic_result.scores)
     result.critic_result = {
         "verdict": critic_result.verdict,
-        "scores": critic_result.scores,
+        "scores": serialized_scores,
         "rollback_count": critic_result.rollback_count,
         "halted_by": critic_result.halted_by,
     }
@@ -308,6 +342,280 @@ def run(
     return result
 
 
+def run_stream(
+    prompt: str,
+    session_id: str | None = None,
+    model_id: str | None = None,
+    db_session: Session | None = None,
+) -> Generator[dict]:
+    """Execute the pipeline with streaming LLM generation.
+
+    Yields SSE-style dicts:
+      {"event": "token", "data": {"text": "...", "index": N}}
+      {"event": "status", "data": {"step": "...", ...}}
+      {"event": "done", "data": {<final PipelineResult fields>}}
+      {"event": "error", "data": {"error": "..."}}
+    """
+    from app.core.llm.models import LLMChunk
+    from app.core.llm.provider import _resolve_route, generate_stream
+
+    start = time.time()
+    trace_id = uuid.uuid4().hex
+    session_id = session_id or uuid.uuid4().hex
+    result = PipelineResult(trace_id=trace_id, session_id=session_id, status="pending")
+
+    yield {"event": "status", "data": {"step": "input_scan", "trace_id": trace_id}}
+
+    input_scan = scan_input(prompt, session_id=session_id)
+    result.immune_input = {
+        "verdict": input_scan.verdict.value,
+        "score": input_scan.score,
+        "triggers": input_scan.triggers,
+    }
+
+    if input_scan.verdict == Verdict.BLOCK:
+        result.status = "blocked"
+        result.error = "Input blocked by immune scanner"
+        result.latency_ms = _elapsed(start)
+        if db_session:
+            _push_pipeline_failure(
+                trace_id=trace_id, source_node="immune", failure_type="injection",
+                prompt=prompt, response=None,
+                detail={"stage": "input_scan", "immune_input": result.immune_input},
+                db_session=db_session,
+            )
+        _persist_trace(result, prompt, db_session)
+        _record_run(result)
+        yield {"event": "error", "data": {"error": result.error, "status": "blocked"}}
+        return
+
+    if input_scan.verdict == Verdict.FLAG:
+        hardened, removed = harden_prompt(prompt)
+        if removed:
+            if hardened.strip():
+                prompt = hardened
+                result.immune_input["hardened"] = True
+                result.immune_input["removed_fragments"] = removed
+            else:
+                result.status = "blocked"
+                result.error = "Prompt entirely composed of flagged content"
+                result.immune_input["hardened_empty"] = True
+                result.latency_ms = _elapsed(start)
+                if db_session:
+                    _push_pipeline_failure(
+                        trace_id=trace_id, source_node="immune", failure_type="injection",
+                        prompt=prompt, response=None,
+                        detail={"stage": "input_hardening_empty", "immune_input": result.immune_input},
+                        db_session=db_session,
+                    )
+                _persist_trace(result, prompt, db_session)
+                _record_run(result)
+                yield {"event": "error", "data": {"error": result.error, "status": "blocked"}}
+                return
+
+    system_hint: str | None = None
+    try:
+        from app.core.asflc.analyzer import analyze as asflc_analyze
+
+        analysis = asflc_analyze(prompt, model_id=model_id)
+        if analysis is not None:
+            result.asflc = {
+                "chosen_path": analysis.chosen_path,
+                "confidence": analysis.confidence,
+                "loops": analysis.loops,
+                "all_paths": analysis.asflc.all_paths,
+                "converged": analysis.asflc.converged,
+                "chain_regret": analysis.asflc.chain_regret,
+            }
+            system_hint = analysis.system_hint
+    except Exception:
+        logger.warning("A-S-FLC analysis failed; continuing without it", exc_info=True)
+
+    yield {"event": "status", "data": {"step": "generating"}}
+
+    arbiter = get_arbiter(db_session)
+
+    try:
+        chunks: list[LLMChunk] = list(generate_stream(prompt, model_id=model_id, system_prompt=system_hint))
+    except Exception as exc:
+        logger.exception("Streaming LLM generation failed: trace_id=%s", trace_id)
+        result.status = "error"
+        result.error = "LLM generation failed"
+        result.latency_ms = _elapsed(start)
+        if db_session:
+            _push_pipeline_failure(
+                trace_id=trace_id, source_node="pipeline", failure_type="pipeline_error",
+                prompt=prompt, response=None,
+                detail={"stage": "llm_stream", "error": str(exc)},
+                db_session=db_session,
+            )
+        _persist_trace(result, prompt, db_session)
+        _record_run(result)
+        yield {"event": "error", "data": {"error": result.error, "status": "error"}}
+        return
+
+    accumulated = ""
+    for chunk in chunks:
+        accumulated += chunk.text
+        yield {"event": "token", "data": {"text": chunk.text, "index": chunk.index}}
+
+    response = accumulated.strip()
+    _, resolved_model, _ = _resolve_route(model_id)
+    result.model_id_used = resolved_model
+    result.token_count = len(accumulated.split())
+
+    yield {"event": "status", "data": {"step": "evaluating"}}
+
+    try:
+        critic_ctx = {
+            "prompt": prompt,
+            "response": response,
+            "model_id": result.model_id_used,
+            "trace_id": trace_id,
+        }
+        critic_result = arbiter.evaluate(critic_ctx)
+    except Exception as exc:
+        logger.exception("Critic evaluation failed during stream: trace_id=%s", trace_id)
+        result.status = "error"
+        result.error = "Critic evaluation failed"
+        result.latency_ms = _elapsed(start)
+        if db_session:
+            _push_pipeline_failure(
+                trace_id=trace_id, source_node="critic", failure_type="pipeline_error",
+                prompt=prompt, response=response,
+                detail={"stage": "critic_evaluation", "error": str(exc)},
+                db_session=db_session,
+            )
+        _persist_trace(result, prompt, db_session)
+        _record_run(result)
+        yield {"event": "error", "data": {"error": result.error, "status": "error"}}
+        return
+
+    serialized_scores = _serialize_scores(critic_result.scores)
+    result.critic_result = {
+        "verdict": critic_result.verdict,
+        "scores": serialized_scores,
+        "rollback_count": critic_result.rollback_count,
+        "halted_by": critic_result.halted_by,
+    }
+    record_critic_calibration(
+        critic_scores=critic_result.scores, actual_verdict=critic_result.verdict, trace_id=trace_id,
+    )
+    record_critic_scores(critic_result.scores)
+
+    if critic_result.verdict == "halt":
+        result.status = "halted"
+        result.error = f"Halted by critic: {critic_result.halted_by}"
+        result.latency_ms = _elapsed(start)
+        if db_session:
+            _push_critic_failure(trace_id, prompt, response, critic_result, db_session)
+        _persist_trace(result, prompt, db_session)
+        _record_run(result)
+        yield {"event": "error", "data": {"error": result.error, "status": "halted"}}
+        return
+
+    gov_decision = evaluate_action(action_type="respond", resource="chat", db_session=db_session)
+    result.governance = {
+        "decision": gov_decision.decision,
+        "policy": gov_decision.policy_name,
+        "policy_id": gov_decision.policy_id,
+        "risk_level": gov_decision.risk_level,
+    }
+
+    if gov_decision.decision == "deny":
+        result.status = "blocked"
+        result.error = f"Governance denied: {gov_decision.reason}"
+        result.latency_ms = _elapsed(start)
+        if db_session:
+            _push_pipeline_failure(
+                trace_id=trace_id, source_node="covernor", failure_type="governance",
+                prompt=prompt, response=response,
+                detail={"stage": "governance", "governance": result.governance, "reason": gov_decision.reason},
+                db_session=db_session,
+            )
+        _persist_trace(result, prompt, db_session)
+        _record_run(result)
+        yield {"event": "error", "data": {"error": result.error, "status": "blocked"}}
+        return
+
+    if gov_decision.decision == "require_approval":
+        result.status = "pending_approval"
+        result.response = response
+        result.latency_ms = _elapsed(start)
+        if db_session:
+            from app.models.approval_log import ApprovalRequest
+
+            required = max(gov_decision.required_approvals, settings.APPROVAL_QUORUM)
+            approval = ApprovalRequest(
+                trace_id=trace_id,
+                action_type="respond",
+                action_payload={"prompt": prompt, "model_id": model_id},
+                risk_level=gov_decision.risk_level,
+                policy_id=gov_decision.policy_id,
+                required_approvals=str(required),
+                received_approvals="0",
+                status="pending",
+                token_scope={"trace_id": trace_id, "action": "respond"},
+                expires_at=datetime.now(UTC) + timedelta(hours=24),
+            )
+            db_session.add(approval)
+            db_session.flush()
+            result.approval_request_id = approval.id
+            result.governance["approval_request_id"] = approval.id
+        _persist_trace(result, prompt, db_session)
+        _record_run(result)
+        yield {
+            "event": "error",
+            "data": {
+                "error": "Response requires approval before delivery",
+                "status": "pending_approval",
+                "approval_request_id": result.approval_request_id,
+            },
+        }
+        return
+
+    output_scan = scan_output(response)
+    result.immune_output = {
+        "verdict": output_scan.verdict.value,
+        "score": output_scan.score,
+        "triggers": output_scan.triggers,
+    }
+
+    if output_scan.verdict == Verdict.BLOCK:
+        result.status = "blocked"
+        result.error = "Output blocked by immune scanner"
+        result.latency_ms = _elapsed(start)
+        if db_session:
+            _push_pipeline_failure(
+                trace_id=trace_id, source_node="immune", failure_type="safety",
+                prompt=prompt, response=response,
+                detail={"stage": "output_scan", "immune_output": result.immune_output},
+                db_session=db_session,
+            )
+        _persist_trace(result, prompt, db_session)
+        _record_run(result)
+        yield {"event": "error", "data": {"error": result.error, "status": "blocked"}}
+        return
+
+    result.status = "completed"
+    result.response = response
+    result.latency_ms = _elapsed(start)
+    _persist_trace(result, prompt, db_session)
+    _record_run(result)
+    yield {
+        "event": "done",
+        "data": {
+            "trace_id": trace_id,
+            "session_id": session_id,
+            "status": "completed",
+            "model_id": result.model_id_used,
+            "token_count": result.token_count,
+            "latency_ms": result.latency_ms,
+            "critic_verdict": critic_result.verdict,
+        },
+    }
+
+
 def _persist_trace(result: PipelineResult, prompt: str, db_session: Session | None) -> None:
     """Write trace to the audit log.
 
@@ -420,7 +728,7 @@ def _push_critic_failure(
         failure_type=source,
         prompt=prompt,
         response=response,
-        critic_output=critic_result.scores,
+        critic_output=_serialize_scores(critic_result.scores),
         db_session=db_session,
         commit=False,
     )

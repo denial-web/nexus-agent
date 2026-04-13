@@ -97,18 +97,42 @@ def _run_export_cycle() -> dict:
         db.close()
 
 
+_RETENTION_INTERVAL_CYCLES = 12
+
+
+def _run_retention_cycle() -> None:
+    from app.db import SessionLocal
+    from app.services.retention import run_retention
+
+    db = SessionLocal()
+    try:
+        results = run_retention(db)
+        if any(v > 0 for v in results.values()):
+            logger.info("Retention purge: %s", results)
+    except Exception:
+        logger.exception("Retention cycle failed")
+    finally:
+        db.close()
+
+
 def _scheduler_loop(interval: float) -> None:
     logger.info("Training scheduler started (interval=%ds)", interval)
+    cycle_count = 0
     while not _stop_event.is_set():
         _stop_event.wait(interval)
         if _stop_event.is_set():
             break
+        cycle_count += 1
         try:
             result = _run_export_cycle()
             if result.get("exported", 0) > 0:
                 logger.info("Scheduled export: %s", result)
         except Exception:
             logger.exception("Scheduled export cycle failed")
+
+        if cycle_count % _RETENTION_INTERVAL_CYCLES == 0:
+            _run_retention_cycle()
+
     logger.info("Training scheduler stopped")
 
 

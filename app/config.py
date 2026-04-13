@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # Comma-separated origins; empty = CORS middleware not installed (same-origin only)
     CORS_ORIGINS: str = ""
-    EXPOSE_METRICS: bool = True
+    EXPOSE_METRICS: bool = False
 
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     ASFLC_MAX_LOOPS: int = 10
     ASFLC_CONVERGENCE_THRESHOLD: float = 0.01
 
+    # Multi-model compare
+    COMPARE_TIMEOUT_SECONDS: float = 30.0
+    COMPARE_MAX_MODELS: int = 5
+
     # Critic defaults
     CRITIC_MODEL: str = ""
     CRITIC_CHUNK_SIZE: int = 64
@@ -46,6 +50,12 @@ class Settings(BaseSettings):
     # Doctrine Lab integration
     DOCTRINE_LAB_URL: str = "http://localhost:8000"
     DOCTRINE_LAB_API_KEY: str = ""
+
+    # Data retention (days; 0 = no automatic purge)
+    RETENTION_TRACE_DAYS: int = 0
+    RETENTION_LABELING_DAYS: int = 0
+    RETENTION_APPROVAL_DAYS: int = 0
+    RETENTION_CALIBRATION_DAYS: int = 0
 
     # Dashboard — session signing (always set in production)
     SESSION_SECRET: str = ""

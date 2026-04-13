@@ -2,8 +2,8 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -20,7 +20,7 @@ class LabelRequest(BaseModel):
 
 
 class ExportRequest(BaseModel):
-    batch_size: int = 100
+    batch_size: int = Field(default=100, ge=1, le=1000)
     dataset_type: str = "agent_safety"
     send_to_doctrine_lab: bool = True
     enrich_evidential: bool = False
@@ -41,7 +41,7 @@ class FinetuneRequest(BaseModel):
 class LoraCompareRequest(BaseModel):
     node_id: str
     new_lora_path: str
-    test_trace_ids: list[str]
+    test_trace_ids: list[str] = Field(max_length=100)
 
 
 class PromoteAdapterRequest(BaseModel):
@@ -49,16 +49,31 @@ class PromoteAdapterRequest(BaseModel):
     node_name: str
 
 
+def _revert_exported_items(db: Session, batch_id: str) -> None:
+    """Revert items marked as exported back to labeled when Doctrine import fails
+    and the outbox enqueue also fails, preventing data loss."""
+    from app.models.labeling_queue import LabelingItem
+
+    reverted = (
+        db.query(LabelingItem)
+        .filter_by(status="exported", training_batch_id=batch_id)
+        .update({"status": "labeled", "training_batch_id": None, "exported_at": None})
+    )
+    db.commit()
+    logger.warning("Reverted %d items from batch %s back to 'labeled'", reverted, batch_id)
+
+
 @router.get("/queue")
 def get_labeling_queue(
     status: str = "pending",
     failure_type: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> dict:
     """View the labeling queue for training flywheel."""
     from app.core.training.labeler import get_queue
 
-    items = get_queue(status=status, failure_type=failure_type, db_session=db)
+    items = get_queue(status=status, failure_type=failure_type, limit=limit, db_session=db)
     return {"items": items, "count": len(items)}
 
 
@@ -133,7 +148,8 @@ def export_and_send(req: ExportRequest, db: Session = Depends(get_db)) -> dict:
                     error_message=str(exc),
                 )
             except Exception:
-                logger.exception("Could not enqueue Doctrine Lab retry")
+                logger.exception("Could not enqueue Doctrine Lab retry — reverting export status")
+                _revert_exported_items(db, batch_id)
 
     return {
         "exported": len(items),
@@ -259,7 +275,8 @@ def list_calibration_snapshots(limit: int = 20, db: Session = Depends(get_db)) -
     """Recent persisted calibration snapshots."""
     from app.models.training_meta import CalibrationSnapshot
 
-    rows = db.query(CalibrationSnapshot).order_by(CalibrationSnapshot.recorded_at.desc()).limit(min(limit, 100)).all()
+    clamped = max(1, min(limit, 100))
+    rows = db.query(CalibrationSnapshot).order_by(CalibrationSnapshot.recorded_at.desc()).limit(clamped).all()
     return {
         "snapshots": [
             {

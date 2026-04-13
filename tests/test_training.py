@@ -197,6 +197,79 @@ class TestLabelingFlow:
         assert result is None
 
 
+class TestExportRevert:
+    def test_revert_on_double_failure(self, client, db_engine):
+        """If Doctrine import and outbox enqueue both fail, items revert to labeled."""
+        from app.models.labeling_queue import LabelingItem
+        from sqlalchemy.orm import sessionmaker
+
+        Session = sessionmaker(bind=db_engine)
+        setup_db = Session()
+        try:
+            item = push_failure(
+                trace_id="t-revert-1",
+                source_node="safety",
+                failure_type="safety",
+                prompt="revert test",
+                response="revert response",
+                critic_output={"safety": 0.1},
+                db_session=setup_db,
+            )
+            label_item(
+                item_id=item["id"],
+                label="correct_flag",
+                reviewer_id="reviewer",
+                db_session=setup_db,
+            )
+        finally:
+            setup_db.close()
+
+        with (
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+            patch("app.services.doctrine_bridge.import_dataset", side_effect=RuntimeError("boom")),
+            patch("app.core.training.outbox.enqueue_failed_import", side_effect=RuntimeError("double boom")),
+        ):
+            resp = client.post(
+                "/api/training/export",
+                json={"batch_size": 10, "send_to_doctrine_lab": True},
+            )
+
+        assert resp.status_code == 200
+
+        check_db = Session()
+        try:
+            reverted = check_db.query(LabelingItem).filter_by(id=item["id"]).first()
+            assert reverted is not None
+            assert reverted.status == "labeled"
+            check_db.delete(reverted)
+            check_db.commit()
+        finally:
+            check_db.close()
+
+
+class TestInputValidation:
+    def test_export_batch_size_too_large(self, client):
+        resp = client.post(
+            "/api/training/export",
+            json={"batch_size": 9999, "send_to_doctrine_lab": False},
+        )
+        assert resp.status_code == 422
+
+    def test_export_batch_size_zero(self, client):
+        resp = client.post(
+            "/api/training/export",
+            json={"batch_size": 0, "send_to_doctrine_lab": False},
+        )
+        assert resp.status_code == 422
+
+    def test_export_batch_size_negative(self, client):
+        resp = client.post(
+            "/api/training/export",
+            json={"batch_size": -1, "send_to_doctrine_lab": False},
+        )
+        assert resp.status_code == 422
+
+
 class TestTrainingAPI:
     def test_queue_endpoint(self, client):
         resp = client.get("/api/training/queue")
@@ -349,3 +422,9 @@ class TestTrainingAPI:
         data = resp.json()
         assert "snapshots" in data
         assert data["count"] >= 1
+
+    def test_calibration_snapshots_negative_limit_safe(self, client):
+        resp = client.get("/api/training/calibration/snapshots?limit=-5")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "snapshots" in data

@@ -243,6 +243,7 @@ Failure traces awaiting human review for the training flywheel.
 
 ### Agent (`app/api/agent.py`)
 - `POST /api/agent/run` — Execute full pipeline. Body: `{"prompt": "...", "session_id": "optional", "model_id": "optional"}`
+- `POST /api/agent/compare` — Multi-model evaluation. Sends prompt to multiple providers in parallel, critic-scores each response, returns the best. Body: `{"prompt": "...", "model_ids": ["gemini-2.5-flash", "gpt-4o-mini"], "session_id": "optional"}`. Omit `model_ids` to use all configured providers.
 
 ### Traces (`app/api/traces.py`)
 - `GET /api/traces` — List traces. Query: `?session_id=&status=&limit=50&offset=0`
@@ -278,7 +279,7 @@ Failure traces awaiting human review for the training flywheel.
 
 ---
 
-## Testing — 291 tests across 18 files
+## Testing — 374+ tests across 20 files
 
 - All tests in `tests/` directory
 - Fixtures in `tests/conftest.py` (test DB, session, TestClient)

@@ -9,6 +9,7 @@ through the K-of-N process.
 import json
 import logging
 import os
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -23,8 +24,10 @@ logger = logging.getLogger(__name__)
 
 _private_key: ec.EllipticCurvePrivateKey | None = None
 _public_key: ec.EllipticCurvePublicKey | None = None
+_key_lock = threading.Lock()
 
 _issued_tokens: dict[str, "CapabilityToken"] = {}
+_MAX_ISSUED_TOKENS = 10_000
 
 
 @dataclass
@@ -52,22 +55,26 @@ def _ensure_keys() -> None:
     if _private_key is not None:
         return
 
-    path = (settings.ECDSA_PRIVATE_KEY_PATH or "").strip()
-    if path and os.path.isfile(path):
-        with open(path, "rb") as f:
-            loaded = serialization.load_pem_private_key(f.read(), password=None)
-            if not isinstance(loaded, ec.EllipticCurvePrivateKey):
-                raise TypeError("ECDSA_PRIVATE_KEY_PATH must contain an EC private key")
-            _private_key = loaded
-        logger.info("Loaded ECDSA private key from %s", path)
-    else:
-        if path:
-            logger.warning("ECDSA_PRIVATE_KEY_PATH set but file missing; generating ephemeral key")
-        else:
-            logger.warning("ECDSA_PRIVATE_KEY_PATH unset; generating ephemeral in-memory key")
-        _private_key = ec.generate_private_key(ec.SECP256R1())
+    with _key_lock:
+        if _private_key is not None:
+            return
 
-    _public_key = _private_key.public_key()
+        path = (settings.ECDSA_PRIVATE_KEY_PATH or "").strip()
+        if path and os.path.isfile(path):
+            with open(path, "rb") as f:
+                loaded = serialization.load_pem_private_key(f.read(), password=None)
+                if not isinstance(loaded, ec.EllipticCurvePrivateKey):
+                    raise TypeError("ECDSA_PRIVATE_KEY_PATH must contain an EC private key")
+                _private_key = loaded
+            logger.info("Loaded ECDSA private key from %s", path)
+        else:
+            if path:
+                logger.warning("ECDSA_PRIVATE_KEY_PATH set but file missing; generating ephemeral key")
+            else:
+                logger.warning("ECDSA_PRIVATE_KEY_PATH unset; generating ephemeral in-memory key")
+            _private_key = ec.generate_private_key(ec.SECP256R1())
+
+        _public_key = _private_key.public_key()
 
 
 def get_public_key_pem() -> str:
@@ -137,9 +144,26 @@ def issue_token(
         signature=signature,
     )
 
+    if len(_issued_tokens) >= _MAX_ISSUED_TOKENS:
+        _evict_stale_tokens()
+
     _issued_tokens[token_id] = token
     logger.info("Issued capability token %s for trace %s action %s", token_id, trace_id, action_type)
     return token
+
+
+def _evict_stale_tokens() -> None:
+    """Remove consumed and expired tokens to bound memory usage."""
+    now = datetime.now(UTC)
+    stale = [
+        tid
+        for tid, t in _issued_tokens.items()
+        if t.used or datetime.fromisoformat(t.expires_at) < now
+    ]
+    for tid in stale:
+        del _issued_tokens[tid]
+    if stale:
+        logger.debug("Evicted %d stale capability tokens", len(stale))
 
 
 def verify_and_consume(token_id: str) -> tuple[bool, str]:
@@ -171,5 +195,6 @@ def verify_and_consume(token_id: str) -> tuple[bool, str]:
         return False, "Invalid signature"
 
     token.used = True
+    del _issued_tokens[token_id]
     logger.info("Consumed token %s", token_id)
     return True, "Valid"

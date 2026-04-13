@@ -1,8 +1,10 @@
 """Trace replay and audit log endpoints."""
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -10,6 +12,44 @@ from app.models.trace import Trace
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/traces", tags=["Traces"])
+
+
+class TraceSummary(BaseModel):
+    id: str
+    session_id: str
+    status: str
+    immune_verdict: str | None = None
+    critic_verdict: str | None = None
+    latency_ms: float | None = None
+    created_at: str | None = None
+
+
+class TraceListResponse(BaseModel):
+    total: int
+    traces: list[TraceSummary]
+
+
+class TraceDetailResponse(BaseModel):
+    trace: dict[str, Any]
+
+
+class ReplayStep(BaseModel):
+    step: int
+    name: str
+
+
+class ReplayResponse(BaseModel):
+    trace_id: str
+    session_id: str
+    status: str
+    steps: list[dict[str, Any]]
+    latency_ms: float | None = None
+
+
+class ChainVerifyResponse(BaseModel):
+    session_id: str
+    valid: bool
+    problems: list[dict[str, Any]]
 
 
 @router.post("/{trace_id}/re-evaluate")
@@ -23,7 +63,7 @@ def re_evaluate_trace_endpoint(trace_id: str, db: Session = Depends(get_db)) -> 
     return payload
 
 
-@router.get("")
+@router.get("", response_model=TraceListResponse)
 def list_traces(
     session_id: str | None = None,
     status: str | None = None,
@@ -47,7 +87,7 @@ def list_traces(
     }
 
 
-@router.get("/session/{session_id}/verify-chain")
+@router.get("/session/{session_id}/verify-chain", response_model=ChainVerifyResponse)
 def verify_chain_endpoint(session_id: str, db: Session = Depends(get_db)) -> dict:
     """Verify tamper-evident hash chain for all traces in a session."""
     from app.services.integrity import verify_chain
@@ -60,7 +100,7 @@ def verify_chain_endpoint(session_id: str, db: Session = Depends(get_db)) -> dic
     }
 
 
-@router.get("/{trace_id}")
+@router.get("/{trace_id}", response_model=TraceDetailResponse, responses={404: {"description": "Trace not found"}})
 def get_trace(trace_id: str, db: Session = Depends(get_db)) -> dict:
     """Get full trace details for replay."""
     trace = db.query(Trace).filter_by(id=trace_id).first()
@@ -72,7 +112,7 @@ def get_trace(trace_id: str, db: Session = Depends(get_db)) -> dict:
     }
 
 
-@router.get("/{trace_id}/replay")
+@router.get("/{trace_id}/replay", response_model=ReplayResponse, responses={404: {"description": "Trace not found"}})
 def replay_trace(trace_id: str, db: Session = Depends(get_db)) -> dict:
     """Replay a trace showing each pipeline step in order."""
     trace = db.query(Trace).filter_by(id=trace_id).first()

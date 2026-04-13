@@ -1,5 +1,7 @@
 """Security middleware: API key authentication and rate limiting."""
 
+import asyncio
+import hashlib
 import hmac
 import logging
 import time
@@ -15,7 +17,14 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_EXEMPT_PATHS = {"/health", "/health/ready", "/docs", "/redoc", "/openapi.json", "/metrics"}
+_EXEMPT_PATHS = {"/health", "/health/ready", "/docs", "/redoc", "/openapi.json"}
+
+
+def _safe_key_compare(provided: str, expected: str) -> bool:
+    """Timing-safe comparison that hashes both sides to fixed length."""
+    a = hashlib.sha256(provided.encode()).digest()
+    b = hashlib.sha256(expected.encode()).digest()
+    return hmac.compare_digest(a, b)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -52,15 +61,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
             if request.session.get("dashboard_authed"):
                 return await call_next(request)
-            if hmac.compare_digest(request.query_params.get("api_key", ""), api_key):
-                request.session["dashboard_authed"] = True
-                return await call_next(request)
             from starlette.responses import RedirectResponse
 
             return RedirectResponse(url="/dashboard/login", status_code=302)
 
         provided = request.headers.get("X-API-Key", "")
-        if not hmac.compare_digest(provided, api_key):
+        if not _safe_key_compare(provided, api_key):
             logger.warning(
                 "Auth rejected: invalid API key from %s", request.client.host if request.client else "unknown"
             )
@@ -71,11 +77,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 _RATE_LIMITED_PATHS: set[str] = {
     "/api/agent/run",
+    "/api/agent/stream",
+    "/api/agent/compare",
     "/api/training/lora/compare",
     "/api/training/export",
     "/api/training/finetune",
     "/api/training/eval",
     "/api/training/promote-adapter",
+    "/dashboard/login",
 }
 
 _RATE_LIMITED_PREFIXES: tuple[str, ...] = ("/api/traces/",)
@@ -104,14 +113,27 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     counter (e.g. redis INCR + EXPIRE sliding window).
     """
 
+    _EVICT_INTERVAL = 300.0
+
     def __init__(self, app: ASGIApp, **kwargs: Any) -> None:
         super().__init__(app, **kwargs)
         self._requests: dict[str, list[float]] = defaultdict(list)
+        self._last_evict: float = time.time()
+        self._lock = asyncio.Lock()
         global _rate_limiter_instance
         _rate_limiter_instance = self
 
     def reset(self) -> None:
         self._requests.clear()
+
+    def _evict_idle_ips(self, now: float) -> None:
+        if now - self._last_evict < self._EVICT_INTERVAL:
+            return
+        self._last_evict = now
+        window_start = now - 60.0
+        stale = [ip for ip, ts in self._requests.items() if not ts or ts[-1] <= window_start]
+        for ip in stale:
+            del self._requests[ip]
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         rpm = settings.RATE_LIMIT_RPM
@@ -122,19 +144,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"
-        now = time.time()
-        window_start = now - 60.0
 
-        timestamps = self._requests[client_ip]
-        self._requests[client_ip] = [t for t in timestamps if t > window_start]
+        async with self._lock:
+            now = time.time()
+            window_start = now - 60.0
 
-        if len(self._requests[client_ip]) >= rpm:
-            logger.warning("Rate limit exceeded for %s (%d/%d RPM)", client_ip, len(self._requests[client_ip]), rpm)
-            return JSONResponse(
-                status_code=429,
-                content={"detail": f"Rate limit exceeded. Max {rpm} requests per minute."},
-                headers={"Retry-After": "60"},
-            )
+            self._evict_idle_ips(now)
 
-        self._requests[client_ip].append(now)
+            timestamps = self._requests[client_ip]
+            self._requests[client_ip] = [t for t in timestamps if t > window_start]
+
+            if len(self._requests[client_ip]) >= rpm:
+                logger.warning("Rate limit exceeded for %s (%d/%d RPM)", client_ip, len(self._requests[client_ip]), rpm)
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": f"Rate limit exceeded. Max {rpm} requests per minute."},
+                    headers={"Retry-After": "60"},
+                )
+
+            self._requests[client_ip].append(now)
+
         return await call_next(request)

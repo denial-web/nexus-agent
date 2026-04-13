@@ -16,6 +16,7 @@ was explicitly requested), logging a warning rather than crashing.
 
 import json
 import logging
+import threading
 import time
 from collections.abc import Generator
 from typing import Any
@@ -34,6 +35,7 @@ _openai_client: Any = None
 _openai_client_key: str = ""
 _deepseek_client: Any = None
 _deepseek_client_key: str = ""
+_client_lock = threading.Lock()
 
 _local_models: dict[str, Any] = {}
 _local_tokenizers: dict[str, Any] = {}
@@ -60,27 +62,39 @@ def _get_local_model(model: str, device: str) -> Any:
 
 def _get_gemini_client(api_key: str) -> Any:
     global _gemini_client, _gemini_client_key
-    if _gemini_client is None or _gemini_client_key != api_key:
+    if _gemini_client is not None and _gemini_client_key == api_key:
+        return _gemini_client
+    with _client_lock:
+        if _gemini_client is not None and _gemini_client_key == api_key:
+            return _gemini_client
         from google import genai
 
         _gemini_client = genai.Client(api_key=api_key)
         _gemini_client_key = api_key
-    return _gemini_client
+        return _gemini_client
 
 
 def _get_openai_client(api_key: str) -> Any:
     global _openai_client, _openai_client_key
-    if _openai_client is None or _openai_client_key != api_key:
+    if _openai_client is not None and _openai_client_key == api_key:
+        return _openai_client
+    with _client_lock:
+        if _openai_client is not None and _openai_client_key == api_key:
+            return _openai_client
         import openai
 
         _openai_client = openai.OpenAI(api_key=api_key)
         _openai_client_key = api_key
-    return _openai_client
+        return _openai_client
 
 
 def _get_deepseek_client(api_key: str) -> Any:
     global _deepseek_client, _deepseek_client_key
-    if _deepseek_client is None or _deepseek_client_key != api_key:
+    if _deepseek_client is not None and _deepseek_client_key == api_key:
+        return _deepseek_client
+    with _client_lock:
+        if _deepseek_client is not None and _deepseek_client_key == api_key:
+            return _deepseek_client
         import openai
 
         _deepseek_client = openai.OpenAI(
@@ -88,7 +102,7 @@ def _get_deepseek_client(api_key: str) -> Any:
             base_url=settings.DEEPSEEK_BASE_URL,
         )
         _deepseek_client_key = api_key
-    return _deepseek_client
+        return _deepseek_client
 
 
 def reset_clients() -> None:
@@ -430,6 +444,67 @@ def generate(
 
     assert last_error is not None
     raise last_error
+
+
+def get_available_providers() -> list[dict[str, str]]:
+    """Return a list of configured providers with their default model IDs."""
+    providers = []
+    if settings.GEMINI_API_KEY.strip():
+        providers.append({"provider": "gemini", "model_id": settings.GEMINI_MODEL})
+    if settings.OPENAI_API_KEY.strip():
+        providers.append({"provider": "openai", "model_id": settings.OPENAI_MODEL})
+    if settings.DEEPSEEK_API_KEY.strip():
+        providers.append({"provider": "deepseek", "model_id": settings.DEEPSEEK_MODEL})
+    return providers
+
+
+def generate_multi(
+    prompt: str,
+    model_ids: list[str] | None = None,
+    system_prompt: str | None = None,
+    timeout_seconds: float | None = None,
+) -> list[LLMResponse]:
+    """
+    Generate responses from multiple LLM providers in parallel.
+
+    If model_ids is provided, calls each explicitly. Otherwise, calls all
+    configured providers using their default models. Returns a list of
+    LLMResponse objects (one per successful call). Failed calls are logged
+    and omitted from the result. Timeout is configurable via
+    COMPARE_TIMEOUT_SECONDS (default 30s).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if timeout_seconds is None:
+        timeout_seconds = settings.COMPARE_TIMEOUT_SECONDS
+
+    if model_ids:
+        targets = model_ids
+    else:
+        targets = [p["model_id"] for p in get_available_providers()]
+
+    if not targets:
+        return [generate(prompt, model_id=None, system_prompt=system_prompt)]
+
+    results: list[LLMResponse] = []
+    with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+        futures = {pool.submit(generate, prompt, mid, system_prompt): mid for mid in targets}
+        try:
+            for future in as_completed(futures, timeout=timeout_seconds):
+                mid = futures[future]
+                try:
+                    results.append(future.result())
+                except Exception:
+                    logger.warning("Multi-model call failed for %s", mid, exc_info=True)
+        except TimeoutError:
+            logger.warning(
+                "generate_multi timed out after %.1fs; returning %d/%d results",
+                timeout_seconds,
+                len(results),
+                len(targets),
+            )
+
+    return results
 
 
 def _collect_stream_gemini(

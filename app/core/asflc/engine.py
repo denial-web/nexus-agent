@@ -149,14 +149,22 @@ def build_paths_from_llm_output(raw_paths: list[dict]) -> list[DecisionPath]:
     """
     paths = []
     for raw in raw_paths:
-        events = [
-            EventNode(
-                description=e.get("description", ""),
-                probability=float(e.get("probability", 0.5)),
-                impact=float(e.get("impact", 0)),
-                is_positive=bool(e.get("is_positive", True)),
-            )
-            for e in raw.get("events", [])
-        ]
-        paths.append(DecisionPath(name=raw.get("name", "unnamed"), events=events))
+        if not isinstance(raw, dict):
+            continue
+        events = []
+        for e in raw.get("events", []):
+            if not isinstance(e, dict):
+                continue
+            try:
+                events.append(
+                    EventNode(
+                        description=str(e.get("description", "")),
+                        probability=float(e.get("probability", 0.5)),
+                        impact=float(e.get("impact", 0)),
+                        is_positive=bool(e.get("is_positive", True)),
+                    )
+                )
+            except (ValueError, TypeError):
+                continue
+        paths.append(DecisionPath(name=str(raw.get("name", "unnamed")), events=events))
     return paths

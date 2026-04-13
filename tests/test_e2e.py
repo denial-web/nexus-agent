@@ -212,3 +212,12 @@ class TestDashboardE2E:
         assert resp.status_code == 200
         body = resp.text
         assert "nexus_pipeline_runs_total" in body or "text/plain" in resp.headers.get("content-type", "")
+
+    def test_request_id_generated(self, client):
+        resp = client.get("/health")
+        assert "X-Request-ID" in resp.headers
+        assert len(resp.headers["X-Request-ID"]) > 0
+
+    def test_request_id_echoed(self, client):
+        resp = client.get("/health", headers={"X-Request-ID": "custom-req-42"})
+        assert resp.headers["X-Request-ID"] == "custom-req-42"

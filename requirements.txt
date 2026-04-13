@@ -13,6 +13,9 @@ itsdangerous>=2.2.0
 google-genai>=1.0.0
 openai>=1.50.0
 
+# Database drivers (PostgreSQL)
+psycopg2-binary>=2.9.9
+
 # Crypto (ECDSA capability tokens)
 cryptography>=44.0.0
 

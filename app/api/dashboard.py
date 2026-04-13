@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import html as html_mod
 import logging
 import time
 from datetime import UTC, datetime
@@ -8,6 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 from starlette.responses import Response
 
@@ -24,6 +26,7 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 _template_dir = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_template_dir))
+templates.env.autoescape = True
 
 _CSRF_MAX_AGE = 3600
 
@@ -66,8 +69,10 @@ def login_page(request: Request) -> Response:
 @router.post("/login")
 def login_submit(request: Request, api_key: str = Form(...)) -> Response:
     """Validate API key and set session flag."""
+    from app.middleware import _safe_key_compare
+
     expected = settings.NEXUS_API_KEY.strip()
-    if not expected or hmac.compare_digest(api_key, expected):
+    if not expected or _safe_key_compare(api_key, expected):
         request.session["dashboard_authed"] = True
         return RedirectResponse(url="/dashboard", status_code=303)
     return templates.TemplateResponse(request, "login.html", {"error": "Invalid API key"}, status_code=403)
@@ -82,9 +87,12 @@ def logout(request: Request) -> Response:
 @router.get("", response_class=HTMLResponse)
 def trace_list(request: Request, db: Session = Depends(get_db)) -> Response:
     traces = db.query(Trace).order_by(Trace.created_at.desc()).limit(100).all()
-    total = db.query(Trace).count()
-    completed = db.query(Trace).filter(Trace.status == "completed").count()
-    blocked = db.query(Trace).filter(Trace.status.in_(["blocked", "halted", "error"])).count()
+    stats = db.query(
+        func.count().label("total"),
+        func.count(case((Trace.status == "completed", 1))).label("completed"),
+        func.count(case((Trace.status.in_(["blocked", "halted", "error"]), 1))).label("blocked"),
+    ).one()
+    total, completed, blocked = stats.total, stats.completed, stats.blocked
 
     return templates.TemplateResponse(
         request,
@@ -134,6 +142,9 @@ def labeling_queue(request: Request, db: Session = Depends(get_db)) -> Response:
     )
 
 
+_VALID_LABELS = {"correct_flag", "incorrect", "false_positive", "needs_review"}
+
+
 @router.post("/labeling/{item_id}/label")
 def apply_label(
     request: Request,
@@ -144,6 +155,12 @@ def apply_label(
 ) -> Response:
     if not _csrf_valid(request, csrf_token):
         return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
+
+    if label not in _VALID_LABELS:
+        return HTMLResponse(
+            f"<h1>Invalid label. Must be one of: {', '.join(sorted(_VALID_LABELS))}</h1>",
+            status_code=400,
+        )
 
     item = db.query(LabelingItem).filter(LabelingItem.id == item_id).first()
     if item and item.status == "pending":
@@ -201,6 +218,12 @@ def cast_vote(
     )
     if result.error:
         logger.warning("Dashboard vote failed on %s: %s", request_id, result.error)
+        safe_error = html_mod.escape(result.error)
+        return HTMLResponse(
+            f"<h1>Vote failed</h1><p>{safe_error}</p>"
+            '<p><a href="/dashboard/approvals">Back to approvals</a></p>',
+            status_code=result.http_status,
+        )
 
     return RedirectResponse(url="/dashboard/approvals", status_code=303)
 

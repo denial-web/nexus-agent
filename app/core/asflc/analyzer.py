@@ -154,7 +154,11 @@ def analyze(prompt: str, model_id: str | None = None) -> AnalysisResult | None:
         raw_paths = []
         used_fallback = True
     else:
-        paths = build_paths_from_llm_output(raw_paths)
+        try:
+            paths = build_paths_from_llm_output(raw_paths)
+        except Exception:
+            logger.warning("Failed to parse LLM decision paths; using defaults", exc_info=True)
+            paths = []
         if len(paths) < 2:
             paths = _default_paths(prompt)
             raw_paths = []

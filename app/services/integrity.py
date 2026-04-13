@@ -21,11 +21,15 @@ def compute_trace_hash(
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+_MAX_CHAIN_TRACES = 10_000
+
+
 def verify_chain(session_id: str, db_session: Session) -> list[dict[str, Any]]:
     """
     Walk traces for a session in sequence order and verify hash links.
 
     Returns a list of problem dicts; empty list means the chain is intact.
+    Capped at _MAX_CHAIN_TRACES rows to prevent unbounded memory use.
     """
     from app.models.trace import Trace
 
@@ -33,6 +37,7 @@ def verify_chain(session_id: str, db_session: Session) -> list[dict[str, Any]]:
         db_session.query(Trace)
         .filter_by(session_id=session_id)
         .order_by(Trace.sequence.asc(), Trace.created_at.asc())
+        .limit(_MAX_CHAIN_TRACES)
         .all()
     )
     if not rows:
@@ -92,6 +97,7 @@ def cascade_rehash_from_trace(db_session: Session, trace_id: str) -> None:
         .filter_by(session_id=start.session_id)
         .filter(Trace.sequence >= start.sequence)
         .order_by(Trace.sequence.asc(), Trace.created_at.asc())
+        .limit(_MAX_CHAIN_TRACES)
         .all()
     )
 

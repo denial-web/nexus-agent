@@ -4,11 +4,15 @@ import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_nexus.db"
+_TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "sqlite:///./test_nexus.db")
+_IS_SQLITE = _TEST_DB_URL.startswith("sqlite")
+
+os.environ["DATABASE_URL"] = _TEST_DB_URL
 os.environ["NEXUS_API_KEY"] = ""
 os.environ["GEMINI_API_KEY"] = ""
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["DEEPSEEK_API_KEY"] = ""
+os.environ["EXPOSE_METRICS"] = "true"
 
 from app.db import Base
 from app.main import app
@@ -17,18 +21,27 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(scope="session")
 def db_engine():
-    if os.path.exists("test_nexus.db"):
-        os.remove("test_nexus.db")
-    engine = create_engine("sqlite:///./test_nexus.db", connect_args={"check_same_thread": False})
+    connect_args: dict = {}
+    if _IS_SQLITE:
+        if os.path.exists("test_nexus.db"):
+            os.remove("test_nexus.db")
+        connect_args["check_same_thread"] = False
 
-    @event.listens_for(engine, "connect")
-    def _pragma(conn, _):
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+    engine = create_engine(_TEST_DB_URL, connect_args=connect_args)
+
+    if _IS_SQLITE:
+
+        @event.listens_for(engine, "connect")
+        def _pragma(conn, _):
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
 
     import app.models  # noqa: F401
+
+    if not _IS_SQLITE:
+        Base.metadata.drop_all(bind=engine)
 
     Base.metadata.create_all(bind=engine)
     Session = sessionmaker(bind=engine)
@@ -42,7 +55,7 @@ def db_engine():
     yield engine
     Base.metadata.drop_all(bind=engine)
     engine.dispose()
-    if os.path.exists("test_nexus.db"):
+    if _IS_SQLITE and os.path.exists("test_nexus.db"):
         os.remove("test_nexus.db")
 
 
@@ -73,6 +86,18 @@ def _seed_test_policies(session):
         )
     )
     session.commit()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Clear rate-limiter state before every test to prevent cross-test 429s."""
+    from app.middleware import _rate_limiter_instance
+
+    if _rate_limiter_instance is not None:
+        _rate_limiter_instance.reset()
+    yield
+    if _rate_limiter_instance is not None:
+        _rate_limiter_instance.reset()
 
 
 @pytest.fixture

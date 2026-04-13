@@ -51,3 +51,7 @@ class ApprovalVote(Base):
     reason = Column(Text, nullable=True)
     signature = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        Index("uq_vote_request_approver", "request_id", "approver_id", unique=True),
+    )
