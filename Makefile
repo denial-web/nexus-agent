@@ -1,4 +1,4 @@
-.PHONY: install dev test lint format typecheck audit migrate serve docker-up docker-down clean
+.PHONY: install dev test test-fast test-cov lint format typecheck audit migrate serve docker-up docker-down clean
 
 install:
 	pip install -r requirements.txt
@@ -11,6 +11,9 @@ test:
 
 test-fast:
 	pytest tests/ -x -q --tb=line
+
+test-cov:
+	pytest tests/ -v --tb=short --cov=app --cov-report=term-missing --cov-report=html:htmlcov
 
 lint:
 	ruff check app/ tests/

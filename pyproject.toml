@@ -35,3 +35,17 @@ disable_error_code = [
 [[tool.mypy.overrides]]
 module = "tests.*"
 ignore_errors = true
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/templates/*", "app/static/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 0
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+]

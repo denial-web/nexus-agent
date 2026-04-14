@@ -2,3 +2,4 @@
 -r requirements.txt
 mypy>=1.14.0
 pip-audit>=2.7.0
+pytest-cov>=7.0.0
