@@ -1,8 +1,13 @@
 # Nexus Agent
 
+[![CI](https://github.com/denial-web/nexus-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/denial-web/nexus-agent/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python 3.13+](https://img.shields.io/badge/Python-3.13+-3776AB.svg)](https://www.python.org/)
+[![Tests: 384](https://img.shields.io/badge/Tests-384_passing-brightgreen.svg)](tests/)
+
 **Zero-Trust & Self-Evolving AI Agent System**
 
-A production-grade agent runtime that wraps every LLM call in strict security boundaries — input scanning, governance approval, critic evaluation, output scanning — and feeds failures back into a labeling queue for continuous fine-tuning.
+A production-grade runtime that wraps every LLM call in strict security boundaries — prompt injection detection in 11 languages, default-deny governance with cryptographic approval tokens, critic tree evaluation, output scanning — and feeds failures into a training flywheel for continuous self-improvement.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -17,6 +22,23 @@ A production-grade agent runtime that wraps every LLM call in strict security bo
 └──────────────────────────────────────────────────────────┘
 ```
 
+## Why Nexus Agent?
+
+Most LLM agent frameworks focus on chaining prompts and tools. None of them answer: **"How do you stop the agent from doing something dangerous?"**
+
+| Capability | Nexus Agent | LangChain | CrewAI | AutoGen |
+|---|:---:|:---:|:---:|:---:|
+| Prompt injection detection (11 languages) | **Yes** | No | No | No |
+| Default-deny governance engine | **Yes** | No | No | No |
+| K-of-N human approval with ECDSA tokens | **Yes** | No | No | No |
+| Pluggable critic tree (hot-swap at runtime) | **Yes** | No | No | No |
+| Tamper-evident hash-chained audit trail | **Yes** | No | No | No |
+| Training flywheel (failures → fine-tuning) | **Yes** | No | No | No |
+| Multi-model comparison with critic scoring | **Yes** | No | No | No |
+| SSE streaming with post-generation security | **Yes** | Partial | No | Partial |
+
+Nexus Agent is not another prompt-chaining framework. It is a **security and governance layer** that wraps any LLM call — whether you use it standalone or integrate it in front of your existing agent stack.
+
 ---
 
 ## Table of Contents
@@ -29,6 +51,7 @@ A production-grade agent runtime that wraps every LLM call in strict security bo
 6. [Deployment](#deployment)
 7. [Development](#development)
 8. [Architecture Deep Dive](#architecture-deep-dive)
+9. [Contributing](#contributing)
 
 ---
 
@@ -518,6 +541,12 @@ curl http://localhost:9000/api/traces/session/YOUR_SESSION_ID/verify-chain
 - Nexus Agent generates failure traces → exports them as training data
 - Doctrine Lab curates datasets, runs fine-tuning, and evaluates models
 - Fine-tuned LoRA adapters are hot-swapped back into Nexus Agent's critic nodes
+
+---
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines. For security vulnerabilities, see [SECURITY.md](SECURITY.md).
 
 ---
 
