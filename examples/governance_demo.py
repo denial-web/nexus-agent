@@ -10,18 +10,24 @@ Usage:
 """
 
 import json
+import os
 import urllib.error
 import urllib.request
 
-BASE_URL = "http://localhost:9000"
+BASE_URL = os.environ.get("NEXUS_URL", "http://localhost:9000")
+API_KEY = os.environ.get("NEXUS_API_KEY", "")
 
 
 def api(method: str, path: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body else None
+    headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["X-API-Key"] = API_KEY
+
     req = urllib.request.Request(
         f"{BASE_URL}{path}",
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method=method,
     )
     try:

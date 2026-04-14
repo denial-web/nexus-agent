@@ -8,13 +8,16 @@ Usage:
     # Start the server first (with at least 2 provider keys in .env):  make dev
     # Without keys, mock mode generates deterministic responses for all models.
     python examples/multi_model_compare.py
+    python examples/multi_model_compare.py "Explain the double-slit experiment"
 """
 
 import json
+import os
 import sys
 import urllib.request
 
-BASE_URL = "http://localhost:9000"
+BASE_URL = os.environ.get("NEXUS_URL", "http://localhost:9000")
+API_KEY = os.environ.get("NEXUS_API_KEY", "")
 
 
 def compare(prompt: str, model_ids: list[str] | None = None) -> dict:
@@ -22,10 +25,14 @@ def compare(prompt: str, model_ids: list[str] | None = None) -> dict:
     if model_ids:
         body["model_ids"] = model_ids
 
+    headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["X-API-Key"] = API_KEY
+
     req = urllib.request.Request(
         f"{BASE_URL}/api/agent/compare",
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read())

@@ -4,13 +4,16 @@ Basic pipeline run — send a prompt and inspect the full audit trail.
 Usage:
     # Start the server first:  make dev
     python examples/basic_run.py
+    python examples/basic_run.py "Explain how neural networks learn"
 """
 
 import json
+import os
 import sys
 import urllib.request
 
-BASE_URL = "http://localhost:9000"
+BASE_URL = os.environ.get("NEXUS_URL", "http://localhost:9000")
+API_KEY = os.environ.get("NEXUS_API_KEY", "")
 
 
 def run_prompt(prompt: str, model_id: str | None = None) -> dict:
@@ -18,10 +21,14 @@ def run_prompt(prompt: str, model_id: str | None = None) -> dict:
     if model_id:
         body["model_id"] = model_id
 
+    headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["X-API-Key"] = API_KEY
+
     req = urllib.request.Request(
         f"{BASE_URL}/api/agent/run",
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read())

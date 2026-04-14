@@ -17,4 +17,10 @@ Then run any example:
 
 All examples use only the Python standard library (no extra dependencies). They talk to the running server via HTTP.
 
-Without any API keys configured, the server runs in **mock mode** — all examples work out of the box.
+If you have `NEXUS_API_KEY` set in your `.env`, export it so the examples can authenticate:
+
+```bash
+export NEXUS_API_KEY=your-key-here
+```
+
+Without any LLM provider keys configured, the server runs in **mock mode** — all examples work out of the box.
