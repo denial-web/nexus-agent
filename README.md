@@ -3,7 +3,7 @@
 [![CI](https://github.com/denial-web/nexus-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/denial-web/nexus-agent/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.13+](https://img.shields.io/badge/Python-3.13+-3776AB.svg)](https://www.python.org/)
-[![Tests: 384](https://img.shields.io/badge/Tests-384_passing-brightgreen.svg)](tests/)
+[![Tests: 462](https://img.shields.io/badge/Tests-462_passing-brightgreen.svg)](tests/)
 [![Demo](https://img.shields.io/badge/🤗_Demo-Live-orange.svg)](https://huggingface.co/spaces/denialkhmbot/nexus-agent-demo)
 
 **Zero-Trust & Self-Evolving AI Agent System**
@@ -48,13 +48,14 @@ Nexus Agent is not another prompt-chaining framework. It is a **security and gov
 
 1. [Quick Start](#quick-start)
 2. [How It Works](#how-it-works)
-3. [Configuration](#configuration)
-4. [API Reference](#api-reference)
-5. [Dashboard](#dashboard)
-6. [Deployment](#deployment)
-7. [Development](#development)
-8. [Architecture Deep Dive](#architecture-deep-dive)
-9. [Contributing](#contributing)
+3. [Digital Employee (agentic mode)](#digital-employee-agentic-mode)
+4. [Configuration](#configuration)
+5. [API Reference](#api-reference)
+6. [Dashboard](#dashboard)
+7. [Deployment](#deployment)
+8. [Development](#development)
+9. [Architecture Deep Dive](#architecture-deep-dive)
+10. [Contributing](#contributing)
 
 ---
 
@@ -237,6 +238,19 @@ Your Prompt
 
 ---
 
+## Digital Employee (agentic mode)
+
+Beyond one-shot generation, Nexus can run a **ReAct-style agent loop** with governed tools, per-step reflection, critic feedback, and task-level reward scoring:
+
+- **Tools** (Covernor-gated): `shell_exec`, `file_read`, `file_write`, `web_fetch`, `search` — see seeded policies in `app/main.py`.
+- **API**: `POST /api/agent/agent/run`, `POST /api/agent/agent/resume` (after approvals), `POST /api/agent/agent/feedback` (thumbs up/down on a trace).
+- **CLI**: `nexus chat`, `nexus run "…"`, `nexus status`, `nexus approve <id>`, `nexus resume <trace_id>`, `nexus feedback <trace_id> good|bad`, `nexus skills`, `nexus skills execute <id>`, `nexus skills toggle <id> on|off` (install with `pip install -e .` or use the project venv).
+- **Telegram**: set `TELEGRAM_BOT_TOKEN` and start the API; long-polling runs when configured.
+- **Memory & training**: episodes and step traces are stored; trajectory export extends the training flywheel (`export_agent_trajectories` in the labeler).
+- **Privacy**: set `LOCAL_ONLY=true` to block outbound network (LLM routes to Ollama, tools like `web_fetch`/`search` disabled, Doctrine Lab import skipped). Use `model_id=ollama:…` and `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434/v1`). Set `OLLAMA_LIST_IN_PROVIDERS=true` if you want Ollama included in multi-provider discovery; it is **off by default** so `compare` and auto-routing do not probe localhost unless you opt in.
+
+---
+
 ## Configuration
 
 All settings are controlled via environment variables (or a `.env` file). Copy `.env.example` to `.env` and edit.
@@ -253,8 +267,12 @@ Set at least one to use real LLM generation. Without any keys, Nexus Agent runs 
 | `OPENAI_MODEL` | OpenAI model name | `gpt-4o-mini` |
 | `DEEPSEEK_API_KEY` | DeepSeek API key | (empty) |
 | `DEEPSEEK_MODEL` | DeepSeek model name | `deepseek-chat` |
+| `OLLAMA_BASE_URL` | OpenAI-compatible Ollama API base URL | `http://127.0.0.1:11434/v1` |
+| `OLLAMA_DEFAULT_MODEL` | Model name when using `ollama:` routes | `llama3.2` |
+| `OLLAMA_LIST_IN_PROVIDERS` | Include Ollama in `get_available_providers()` / compare auto-lists | `false` |
+| `LOCAL_ONLY` | Enforce no outbound HTTP (local LLM + disabled cloud tools/bridge) | `false` |
 
-Provider selection: if you set `model_id` in your request, it routes based on the prefix (`gpt` → OpenAI, `gemini` → Gemini, `deepseek` → DeepSeek). Without an explicit `model_id`, it tries Gemini → OpenAI → DeepSeek → mock, using whichever has a key set.
+Provider selection: if you set `model_id` in your request, it routes based on the prefix (`gpt` → OpenAI, `gemini` → Gemini, `deepseek` → DeepSeek, `ollama:` → Ollama). Without an explicit `model_id`, it tries Gemini → OpenAI → DeepSeek → mock, using whichever has a key set.
 
 ### Security
 
@@ -356,7 +374,19 @@ curl -X POST http://localhost:9000/api/agent/compare \
   }'
 ```
 
-Returns all candidates with scores, plus the winner. If `model_ids` is omitted, all configured providers are used.
+Returns all candidates with scores, plus the winner. If `model_ids` is omitted, all configured providers are used (Ollama is listed only when `OLLAMA_LIST_IN_PROVIDERS=true`).
+
+#### `POST /api/agent/agent/run` — Agentic loop (tools + reflection)
+
+Runs `run_agent()` with the same immune scan and governance as the core pipeline. Request body includes `prompt`, optional `session_id`, `model_id`, `max_steps`, `resume_state` (for continuing after approval).
+
+#### `POST /api/agent/agent/resume` — Resume after approval
+
+Continues an agent trace that paused on `require_approval` once votes/token are satisfied.
+
+#### `POST /api/agent/agent/feedback` — Task feedback
+
+Attach `good` / `bad` user feedback to a completed trace (feeds reward scoring and episodic memory).
 
 ### Traces (Audit Log)
 
@@ -439,6 +469,18 @@ Critic nodes are hot-swappable — you can add, update, or deactivate them at ru
 | `POST` | `/api/training/calibration/persist` | Persist a calibration snapshot |
 | `GET` | `/api/training/calibration/snapshots` | List calibration snapshots |
 
+### Skills (Reusable Workflows)
+
+High-reward agent episodes are auto-abstracted into reusable skills. Skills are Covernor-gated on every step during execution, reward-tracked, and auto-disabled if their performance declines.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/skills` | List skills (`?enabled_only=true`) |
+| `GET` | `/api/skills/{id}` | Full skill detail (steps, reward stats, hash) |
+| `POST` | `/api/skills/{id}/execute` | Execute a skill step-by-step with Covernor gating |
+| `PATCH` | `/api/skills/{id}` | Enable or disable a skill (`{"enabled": true}`) |
+| `DELETE` | `/api/skills/{id}` | Permanently delete a skill |
+
 ### Health & Metrics
 
 | Method | Path | Description |
@@ -464,6 +506,9 @@ View pending approval requests and cast votes (approve/deny) directly from the b
 
 ### Calibration Dashboard
 Monitor Expected Calibration Error (ECE) across critic nodes. See accuracy-vs-confidence bins to understand how well your critics are calibrated.
+
+### Skills Library
+View all auto-generated skills with reward stats, enable/disable them, and execute on demand. Skills are created automatically from high-reward agent episodes.
 
 When `NEXUS_API_KEY` is set, the dashboard requires login. In development mode (no API key), it's open.
 
@@ -514,7 +559,7 @@ Rate limiting, capability tokens, and the training scheduler use in-process memo
 
 ```bash
 make dev          # Install deps, migrate, start with hot-reload
-make test         # Run all 384 tests
+make test         # Run all 462 tests
 make test-fast    # Run tests, stop on first failure
 make test-cov     # Run tests with coverage report (terminal + htmlcov/)
 make lint         # Check code with ruff
@@ -559,7 +604,7 @@ pytest tests/test_pipeline.py::TestPipeline::test_clean_prompt_completes -v
 | `app/services/` | Cross-cutting services — integrity, replay, retention, Doctrine Lab bridge |
 | `app/models/` | SQLAlchemy models |
 | `app/templates/` | Jinja2 templates for the dashboard |
-| `tests/` | 384 tests across 21 files |
+| `tests/` | 462 tests across 25 files |
 
 ---
 

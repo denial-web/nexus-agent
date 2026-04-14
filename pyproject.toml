@@ -3,6 +3,9 @@ name = "nexus-agent"
 version = "0.1.0"
 requires-python = ">=3.13"
 
+[project.scripts]
+nexus = "app.cli:main"
+
 [tool.ruff]
 target-version = "py313"
 line-length = 120
@@ -25,6 +28,7 @@ check_untyped_defs = true
 # SQLAlchemy Column vs Python types and Starlette middleware stubs need follow-up
 disable_error_code = [
     "arg-type",
+    "assignment",
     "attr-defined",
     "call-arg",
     "misc",

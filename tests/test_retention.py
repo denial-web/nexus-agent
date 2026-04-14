@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from app.models.approval_log import ApprovalRequest, ApprovalVote
+from app.models.approval_log import ApprovalRequest
 from app.models.labeling_queue import LabelingItem
 from app.models.trace import Trace
 from app.models.training_meta import CalibrationSnapshot

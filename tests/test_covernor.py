@@ -61,7 +61,6 @@ class TestPolicyEngine:
                 db_session.delete(p)
                 db_session.commit()
 
-
     def test_corrupt_required_approvals_defaults_to_deny(self, db_session):
         from app.models.policy import Policy
 

@@ -1,5 +1,6 @@
 from app.models.approval_log import ApprovalRequest
 from app.models.labeling_queue import LabelingItem
+from app.models.skill import Skill
 from app.models.trace import Trace
 
 
@@ -104,7 +105,6 @@ class TestDashboardLabeling:
         item = db_session.query(LabelingItem).filter_by(id="label-item-2").first()
         assert item.status == "labeled"
         assert item.label == "false_positive"
-
 
     def test_apply_invalid_label_rejected(self, client, db_session):
         db_session.add(
@@ -223,7 +223,6 @@ class TestDashboardApprovals:
         req = db_session.query(ApprovalRequest).filter_by(id="approval-deny-1").first()
         assert req.status == "denied"
 
-
     def test_vote_on_nonexistent_request_returns_error(self, client):
         resp = client.post(
             "/dashboard/approvals/nonexistent-req/vote",
@@ -240,3 +239,122 @@ class TestDashboardCalibration:
         assert resp.status_code == 200
         assert "Calibration Dashboard" in resp.text
         assert "Expected Calibration Error" in resp.text
+
+
+class TestDashboardSkills:
+    def test_skills_page_loads(self, client):
+        resp = client.get("/dashboard/skills")
+        assert resp.status_code == 200
+        assert "Skills Library" in resp.text
+
+    def test_skills_page_shows_data(self, client, db_session):
+        db_session.add(
+            Skill(
+                id="dash-skill-1",
+                name="test-dashboard-skill",
+                description="A skill shown in the dashboard",
+                steps=[{"action": "tool_call", "tool": "file_read", "arguments_template": {"path": "x"}}],
+                expected_reward=0.9,
+                enabled=True,
+                avg_reward=0.85,
+                total_runs=3,
+            )
+        )
+        db_session.commit()
+
+        resp = client.get("/dashboard/skills")
+        assert resp.status_code == 200
+        assert "test-dashboard-skill" in resp.text
+        assert "0.85" in resp.text
+
+    def test_skills_page_shows_empty_state(self, client):
+        resp = client.get("/dashboard/skills")
+        assert resp.status_code == 200
+        assert "auto-generated" in resp.text or "Skills Library" in resp.text
+
+    def test_skill_detail_page(self, client, db_session):
+        db_session.add(
+            Skill(
+                id="dash-detail-skill",
+                name="detail-view-skill",
+                description="Full detail view test",
+                steps=[
+                    {"action": "tool_call", "tool": "shell_exec", "arguments_template": {"command": "ls"}},
+                    {"action": "final_answer", "content_hint": "Done"},
+                ],
+                expected_reward=0.88,
+                enabled=True,
+                avg_reward=0.9,
+                total_runs=5,
+                skill_hash="abc123",
+                immune_scanned=True,
+                critic_scanned=False,
+                source_episode_id="ep-src-1",
+            )
+        )
+        db_session.commit()
+
+        resp = client.get("/dashboard/skills/dash-detail-skill")
+        assert resp.status_code == 200
+        assert "detail-view-skill" in resp.text
+        assert "shell_exec" in resp.text
+        assert "ep-src-1" in resp.text
+
+    def test_skill_detail_404(self, client):
+        resp = client.get("/dashboard/skills/nonexistent")
+        assert resp.status_code == 404
+
+    def test_toggle_skill_disable(self, client, db_session):
+        db_session.add(
+            Skill(
+                id="dash-toggle-1",
+                name="toggle-me",
+                steps=[],
+                expected_reward=0.9,
+                enabled=True,
+            )
+        )
+        db_session.commit()
+
+        resp = client.post(
+            "/dashboard/skills/dash-toggle-1/toggle",
+            data={"enabled": "false"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        db_session.expire_all()
+        skill = db_session.query(Skill).filter_by(id="dash-toggle-1").first()
+        assert skill.enabled is False
+
+    def test_toggle_skill_enable_clears_flag(self, client, db_session):
+        db_session.add(
+            Skill(
+                id="dash-toggle-2",
+                name="flagged-skill",
+                steps=[],
+                expected_reward=0.9,
+                enabled=False,
+                flagged=True,
+            )
+        )
+        db_session.commit()
+
+        resp = client.post(
+            "/dashboard/skills/dash-toggle-2/toggle",
+            data={"enabled": "true"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        db_session.expire_all()
+        skill = db_session.query(Skill).filter_by(id="dash-toggle-2").first()
+        assert skill.enabled is True
+        assert skill.flagged is False
+
+    def test_toggle_skill_not_found(self, client):
+        resp = client.post(
+            "/dashboard/skills/nonexistent/toggle",
+            data={"enabled": "false"},
+        )
+        assert resp.status_code == 404

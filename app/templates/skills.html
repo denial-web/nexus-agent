@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Skills — Nexus Agent{% endblock %}
+{% block content %}
+<h1>Skills Library</h1>
+
+<div class="card" style="margin-bottom:1.5rem;">
+  <h2 style="margin-top:0;">Import SKILL.md</h2>
+  <p class="text-dim">Upload a ClawHub-style SKILL.md or paste a URL (disabled in LOCAL_ONLY).</p>
+  <form method="POST" action="/dashboard/skills/import" enctype="multipart/form-data" style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:flex-end;">
+    {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
+    <div>
+      <label for="skill_file">File</label><br>
+      <input type="file" name="file" id="skill_file" accept=".md,text/markdown,text/plain">
+    </div>
+    <div style="flex:1;min-width:200px;">
+      <label for="skill_url">Or URL</label><br>
+      <input type="url" name="url" id="skill_url" placeholder="https://…/SKILL.md" style="width:100%;max-width:420px;">
+    </div>
+    <button type="submit" class="btn btn-primary">Import</button>
+  </form>
+</div>
+
+<div class="stats">
+  <div class="stat">
+    <div class="value">{{ total }}</div>
+    <div class="label">Total Skills</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ enabled }}</div>
+    <div class="label">Enabled</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ flagged }}</div>
+    <div class="label">Flagged</div>
+  </div>
+</div>
+
+{% if skills %}
+<div class="card" style="overflow-x: auto;">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Steps</th>
+        <th>Runs</th>
+        <th>Avg Reward</th>
+        <th>Last Reward</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for s in skills %}
+      <tr>
+        <td>
+          <strong>{{ s.name }}</strong>
+          <div class="text-sm text-dim" style="margin-top:2px;">{{ s.description[:120] }}{% if s.description|length > 120 %}…{% endif %}</div>
+        </td>
+        <td>{{ s.step_count }}</td>
+        <td>{{ s.total_runs }}</td>
+        <td>
+          {% if s.avg_reward is not none %}
+          <span class="score-bar"><span class="fill" style="width:{{ (s.avg_reward * 100)|round }}%; background:{% if s.avg_reward >= 0.7 %}var(--green){% elif s.avg_reward >= 0.4 %}var(--yellow){% else %}var(--red){% endif %};"></span></span>
+          {{ "%.2f"|format(s.avg_reward) }}
+          {% else %}
+          <span class="text-dim">n/a</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if s.last_reward is not none %}
+          {{ "%.2f"|format(s.last_reward) }}
+          {% else %}
+          <span class="text-dim">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if not s.enabled %}
+            <span class="badge badge-denied">disabled</span>
+          {% elif s.flagged %}
+            <span class="badge badge-flag">flagged</span>
+          {% else %}
+            <span class="badge badge-completed">active</span>
+          {% endif %}
+        </td>
+        <td>
+          <a href="/dashboard/skills/{{ s.id }}" class="btn btn-primary btn-sm">View</a>
+          <form method="POST" action="/dashboard/skills/{{ s.id }}/toggle" style="display:inline;">
+            {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
+            {% if s.enabled %}
+            <button type="submit" name="enabled" value="false" class="btn btn-yellow btn-sm">Disable</button>
+            {% else %}
+            <button type="submit" name="enabled" value="true" class="btn btn-green btn-sm">Enable</button>
+            {% endif %}
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card empty">No skills yet. Skills are auto-generated from high-reward agent episodes.</div>
+{% endif %}
+{% endblock %}

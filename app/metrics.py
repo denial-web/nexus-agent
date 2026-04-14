@@ -75,13 +75,13 @@ except ImportError:
             pass
 
     _noop = _Noop()
-    PIPELINE_LATENCY = _noop  # type: ignore[assignment]
-    PIPELINE_RUNS = _noop  # type: ignore[assignment]
-    LLM_CALLS = _noop  # type: ignore[assignment]
-    LLM_ERRORS = _noop  # type: ignore[assignment]
-    CRITIC_SCORES = _noop  # type: ignore[assignment]
-    LABELING_QUEUE_DEPTH = _noop  # type: ignore[assignment]
-    ACTIVE_SESSIONS = _noop  # type: ignore[assignment]
+    PIPELINE_LATENCY = _noop
+    PIPELINE_RUNS = _noop
+    LLM_CALLS = _noop
+    LLM_ERRORS = _noop
+    CRITIC_SCORES = _noop
+    LABELING_QUEUE_DEPTH = _noop
+    ACTIVE_SESSIONS = _noop
 
     logger.debug("prometheus_client not installed; metrics are no-ops")
 

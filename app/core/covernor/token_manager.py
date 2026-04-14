@@ -155,11 +155,7 @@ def issue_token(
 def _evict_stale_tokens() -> None:
     """Remove consumed and expired tokens to bound memory usage."""
     now = datetime.now(UTC)
-    stale = [
-        tid
-        for tid, t in _issued_tokens.items()
-        if t.used or datetime.fromisoformat(t.expires_at) < now
-    ]
+    stale = [tid for tid, t in _issued_tokens.items() if t.used or datetime.fromisoformat(t.expires_at) < now]
     for tid in stale:
         del _issued_tokens[tid]
     if stale:

@@ -108,12 +108,8 @@ class TestRecordCriticCalibration:
         tracker = get_ece_tracker()
         tracker._records.clear()
         scores = {
-            "reasoning": CriticScore(
-                node_name="reasoning", score=0.88, verdict="pass", reasoning="ok"
-            ),
-            "safety": CriticScore(
-                node_name="safety", score=0.75, verdict="pass", reasoning="safe"
-            ),
+            "reasoning": CriticScore(node_name="reasoning", score=0.88, verdict="pass", reasoning="ok"),
+            "safety": CriticScore(node_name="safety", score=0.75, verdict="pass", reasoning="safe"),
         }
         record_critic_calibration(scores, "pass", "trace-cs-1")
         assert tracker.record_count == 2
@@ -138,9 +134,7 @@ class TestRecordCriticCalibration:
         tracker = get_ece_tracker()
         tracker._records.clear()
         scores = {
-            "safety": CriticScore(
-                node_name="safety", score=0.15, verdict="fail", reasoning="unsafe"
-            ),
+            "safety": CriticScore(node_name="safety", score=0.15, verdict="fail", reasoning="unsafe"),
         }
         record_critic_calibration(scores, "halt", "trace-cs-halt")
         report = tracker.compute_ece()
@@ -506,12 +500,8 @@ class TestRecordCriticScoresMetric:
         from app.metrics import record_critic_scores
 
         scores = {
-            "reasoning": CriticScore(
-                node_name="reasoning", score=0.92, verdict="pass", reasoning="ok"
-            ),
-            "safety": CriticScore(
-                node_name="safety", score=0.45, verdict="warn", reasoning="meh"
-            ),
+            "reasoning": CriticScore(node_name="reasoning", score=0.92, verdict="pass", reasoning="ok"),
+            "safety": CriticScore(node_name="safety", score=0.45, verdict="warn", reasoning="meh"),
         }
         import app.metrics as m
 
@@ -521,10 +511,7 @@ class TestRecordCriticScoresMetric:
         try:
             record_critic_scores(scores)
             assert mock_hist.labels.call_count == 2
-            observed_values = [
-                call.args[0]
-                for call in mock_hist.labels.return_value.observe.call_args_list
-            ]
+            observed_values = [call.args[0] for call in mock_hist.labels.return_value.observe.call_args_list]
             assert 0.92 in observed_values
             assert 0.45 in observed_values
         finally:
@@ -561,10 +548,7 @@ class TestRecordCriticScoresMetric:
         try:
             record_critic_scores(scores)
             assert mock_hist.labels.call_count == 2
-            observed = [
-                call.args[0]
-                for call in mock_hist.labels.return_value.observe.call_args_list
-            ]
+            observed = [call.args[0] for call in mock_hist.labels.return_value.observe.call_args_list]
             assert 0.77 in observed
             assert 0.33 in observed
         finally:

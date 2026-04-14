@@ -1,0 +1,10 @@
+[
+  {
+    "name": "stub",
+    "url": "http://127.0.0.1:1/mcp",
+    "transport": "streamable_http",
+    "command": null,
+    "env": {},
+    "enabled": false
+  }
+]

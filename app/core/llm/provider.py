@@ -35,6 +35,7 @@ _openai_client: Any = None
 _openai_client_key: str = ""
 _deepseek_client: Any = None
 _deepseek_client_key: str = ""
+_ollama_client: Any = None
 _client_lock = threading.Lock()
 
 _local_models: dict[str, Any] = {}
@@ -105,17 +106,35 @@ def _get_deepseek_client(api_key: str) -> Any:
         return _deepseek_client
 
 
+def _get_ollama_client() -> Any:
+    global _ollama_client
+    if _ollama_client is not None:
+        return _ollama_client
+    with _client_lock:
+        if _ollama_client is not None:
+            return _ollama_client
+        import openai
+
+        _ollama_client = openai.OpenAI(
+            api_key=settings.OLLAMA_API_KEY,
+            base_url=settings.OLLAMA_BASE_URL,
+        )
+        return _ollama_client
+
+
 def reset_clients() -> None:
     """Reset cached clients (useful for tests)."""
     global _gemini_client, _gemini_client_key
     global _openai_client, _openai_client_key
     global _deepseek_client, _deepseek_client_key
+    global _ollama_client
     _gemini_client = None
     _gemini_client_key = ""
     _openai_client = None
     _openai_client_key = ""
     _deepseek_client = None
     _deepseek_client_key = ""
+    _ollama_client = None
 
 
 def mock_llm_text(prompt: str) -> str:
@@ -169,6 +188,11 @@ def _resolve_route(
             if resolved in ("local", "nexus-spin"):
                 resolved = settings.LOCAL_HF_MODEL_ID or "nexus-spin-v5.3"
             return ("local", resolved, "")
+        if lower.startswith("ollama:") or lower == "ollama":
+            resolved = mid.split(":", 1)[-1].strip() if ":" in mid else settings.OLLAMA_DEFAULT_MODEL
+            if resolved in ("ollama", ""):
+                resolved = settings.OLLAMA_DEFAULT_MODEL
+            return ("ollama", resolved, settings.OLLAMA_API_KEY)
 
     if gemini_key:
         return ("gemini", settings.GEMINI_MODEL, gemini_key)
@@ -215,7 +239,7 @@ def _should_retry(exc: BaseException, provider: str) -> bool:
         return True
     if provider == "gemini":
         return _gemini_retryable(exc)
-    if provider in ("openai", "deepseek"):
+    if provider in ("openai", "deepseek", "ollama"):
         return _openai_retryable(exc)
     return False
 
@@ -290,6 +314,35 @@ def _call_openai(
     except Exception:
         raw = None
 
+    return text, response.model or model, token_count, raw
+
+
+def _call_ollama(
+    prompt: str,
+    model: str,
+    system_prompt: str | None,
+) -> tuple[str, str, int, dict[str, Any] | None]:
+    client = _get_ollama_client()
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+    )
+    choice = response.choices[0]
+    text = (choice.message.content or "").strip()
+    token_count = 0
+    if response.usage is not None:
+        token_count = int(response.usage.total_tokens or 0)
+    if token_count == 0:
+        token_count = _estimate_tokens(text)
+    raw: dict[str, Any] | None = None
+    try:
+        raw = response.model_dump()
+    except Exception:
+        raw = None
     return text, response.model or model, token_count, raw
 
 
@@ -389,7 +442,12 @@ def generate(
     system_prompt: str | None = None,
 ) -> LLMResponse:
     """Generate a full response from the configured provider."""
-    route_provider, resolved_model, api_key = _resolve_route(model_id)
+    eff_model_id = model_id
+    if settings.LOCAL_ONLY:
+        mid = (eff_model_id or "").strip().lower()
+        if mid and not (mid.startswith("local") or mid.startswith("ollama") or mid == "mock"):
+            eff_model_id = f"ollama:{settings.OLLAMA_DEFAULT_MODEL}"
+    route_provider, resolved_model, api_key = _resolve_route(eff_model_id)
     start = time.perf_counter()
 
     if route_provider == "mock":
@@ -406,6 +464,18 @@ def generate(
             token_count=token_count,
             latency_ms=round(latency_ms, 2),
             provider="local",
+            raw_response=raw,
+        )
+
+    if route_provider == "ollama":
+        text, used_model, token_count, raw = _call_ollama(prompt, resolved_model, system_prompt)
+        latency_ms = (time.perf_counter() - start) * 1000
+        return LLMResponse(
+            text=text,
+            model_id=used_model,
+            token_count=token_count,
+            latency_ms=round(latency_ms, 2),
+            provider="ollama",
             raw_response=raw,
         )
 
@@ -455,6 +525,10 @@ def get_available_providers() -> list[dict[str, str]]:
         providers.append({"provider": "openai", "model_id": settings.OPENAI_MODEL})
     if settings.DEEPSEEK_API_KEY.strip():
         providers.append({"provider": "deepseek", "model_id": settings.DEEPSEEK_MODEL})
+    if settings.OLLAMA_LIST_IN_PROVIDERS and settings.OLLAMA_BASE_URL.strip():
+        providers.append(
+            {"provider": "ollama", "model_id": f"ollama:{settings.OLLAMA_DEFAULT_MODEL}"},
+        )
     return providers
 
 
@@ -587,6 +661,31 @@ def _collect_stream_deepseek(
     return [LLMChunk(text=p, index=i, is_final=i == len(pieces) - 1) for i, p in enumerate(pieces)]
 
 
+def _collect_stream_ollama(
+    prompt: str,
+    model: str,
+    system_prompt: str | None,
+) -> list[LLMChunk]:
+    """Consume the Ollama stream fully before returning chunks."""
+    client = _get_ollama_client()
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    stream = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        stream=True,
+    )
+    pieces: list[str] = []
+    for event in stream:
+        choice = event.choices[0]
+        delta = choice.delta
+        if delta and delta.content:
+            pieces.append(delta.content)
+    return [LLMChunk(text=p, index=i, is_final=i == len(pieces) - 1) for i, p in enumerate(pieces)]
+
+
 def generate_stream(
     prompt: str,
     model_id: str | None = None,
@@ -598,7 +697,12 @@ def generate_stream(
     Retries are safe because chunks are fully collected before any are yielded,
     preventing partial-yield-then-retry corruption.
     """
-    route_provider, resolved_model, api_key = _resolve_route(model_id)
+    eff_model_id = model_id
+    if settings.LOCAL_ONLY:
+        mid = (eff_model_id or "").strip().lower()
+        if mid and not (mid.startswith("local") or mid.startswith("ollama") or mid == "mock"):
+            eff_model_id = f"ollama:{settings.OLLAMA_DEFAULT_MODEL}"
+    route_provider, resolved_model, api_key = _resolve_route(eff_model_id)
 
     if route_provider == "mock":
         text = mock_llm_text(prompt)
@@ -613,7 +717,9 @@ def generate_stream(
     last_error: BaseException | None = None
     for attempt in range(_MAX_ATTEMPTS):
         try:
-            if route_provider == "gemini":
+            if route_provider == "ollama":
+                collected = _collect_stream_ollama(prompt, resolved_model, system_prompt)
+            elif route_provider == "gemini":
                 collected = _collect_stream_gemini(prompt, resolved_model, api_key, system_prompt)
             elif route_provider == "deepseek":
                 collected = _collect_stream_deepseek(prompt, resolved_model, api_key, system_prompt)

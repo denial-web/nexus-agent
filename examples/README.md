@@ -10,6 +10,7 @@ Then run any example:
 
 | Script | What it demonstrates |
 |--------|---------------------|
+| `agent_demo.py` | **Digital employee**: reflection loop, denial → adapt, feedback, episodic memory |
 | `basic_run.py` | Send a prompt, inspect the full pipeline audit trail |
 | `injection_demo.py` | Test injection detection across 11 languages |
 | `governance_demo.py` | Create policies, exercise the approval workflow |

@@ -4,7 +4,7 @@ import os
 import time
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from alembic import command
@@ -25,6 +25,8 @@ from app.api.agent import router as agent_router
 from app.api.critic import router as critic_router
 from app.api.dashboard import router as dashboard_router
 from app.api.governance import router as governance_router
+from app.api.mcp import router as mcp_router
+from app.api.skills import router as skills_router
 from app.api.traces import router as traces_router
 from app.api.training import router as training_router
 from app.config import settings
@@ -113,6 +115,130 @@ def _seed_default_policies(db: Session) -> None:
         db.add(policy)
     db.commit()
     logger.info("Seeded %d default governance policies", len(defaults))
+
+
+def _seed_agent_policies(db: Session) -> None:
+    """Add governed tool policies if missing (idempotent by name)."""
+    from app.models.policy import Policy
+
+    wanted = [
+        Policy(
+            name="agent-allow-file-read",
+            description="Agent file reads under workspace",
+            action_pattern="file_read",
+            resource_pattern="*",
+            decision="allow",
+            risk_level="low",
+            required_approvals="0",
+            priority=8,
+        ),
+        Policy(
+            name="agent-allow-file-write",
+            description="Agent file writes under workspace",
+            action_pattern="file_write",
+            resource_pattern="*",
+            decision="allow",
+            risk_level="medium",
+            required_approvals="0",
+            priority=8,
+        ),
+        Policy(
+            name="agent-shell-destructive-approval",
+            description="Destructive shell patterns require approval",
+            action_pattern="shell_exec",
+            resource_pattern="*rm*",
+            decision="require_approval",
+            risk_level="high",
+            required_approvals="1",
+            priority=3,
+        ),
+        Policy(
+            name="agent-shell-sudo-approval",
+            description="sudo requires approval",
+            action_pattern="shell_exec",
+            resource_pattern="*sudo*",
+            decision="require_approval",
+            risk_level="high",
+            required_approvals="1",
+            priority=3,
+        ),
+        Policy(
+            name="agent-shell-allow",
+            description="General shell under governance",
+            action_pattern="shell_exec",
+            resource_pattern="*",
+            decision="allow",
+            risk_level="medium",
+            required_approvals="0",
+            priority=40,
+        ),
+        Policy(
+            name="agent-web-fetch-deny-internal",
+            description="Block agent from fetching internal/localhost URLs",
+            action_pattern="web_fetch",
+            resource_pattern="*localhost*",
+            decision="deny",
+            risk_level="high",
+            required_approvals="0",
+            priority=5,
+        ),
+        Policy(
+            name="agent-web-fetch-deny-internal-ip",
+            description="Block agent from fetching 127.0.0.1 URLs",
+            action_pattern="web_fetch",
+            resource_pattern="*127.0.0.1*",
+            decision="deny",
+            risk_level="high",
+            required_approvals="0",
+            priority=5,
+        ),
+        Policy(
+            name="agent-web-fetch-allow",
+            description="HTTP fetch for agent",
+            action_pattern="web_fetch",
+            resource_pattern="*",
+            decision="allow",
+            risk_level="medium",
+            required_approvals="0",
+            priority=15,
+        ),
+        Policy(
+            name="agent-search-allow",
+            description="Web search for agent",
+            action_pattern="search",
+            resource_pattern="*",
+            decision="allow",
+            risk_level="medium",
+            required_approvals="0",
+            priority=15,
+        ),
+    ]
+    for p in wanted:
+        if db.query(Policy).filter_by(name=p.name).first() is None:
+            db.add(p)
+    db.commit()
+
+
+def _seed_mcp_policies(db: Session) -> None:
+    """Default-deny all MCP tool actions (idempotent by policy name)."""
+    from app.models.policy import Policy
+
+    if db.query(Policy).filter_by(name="mcp-default-deny").first() is not None:
+        return
+    db.add(
+        Policy(
+            name="mcp-default-deny",
+            description="Deny all MCP proxy tool calls until explicitly allowed",
+            action_pattern="mcp:*",
+            resource_pattern="*",
+            decision="deny",
+            risk_level="high",
+            required_approvals="0",
+            priority=100,
+        )
+    )
+    db.commit()
+    logger.info("Seeded MCP default-deny policy")
 
 
 def _seed_default_critics(db: Session) -> None:
@@ -221,25 +347,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _validate_production_config()
     _run_migrations()
 
-    db = SessionLocal()
-    try:
-        _seed_default_policies(db)
-        _seed_default_critics(db)
-    finally:
-        db.close()
+    async with AsyncExitStack() as stack:
+        db = SessionLocal()
+        try:
+            _seed_default_policies(db)
+            _seed_agent_policies(db)
+            _seed_mcp_policies(db)
+            _seed_default_critics(db)
+        finally:
+            db.close()
 
-    from app.core.training.scheduler import start_scheduler, stop_scheduler
+        if settings.MCP_ENABLED and not settings.LOCAL_ONLY:
+            from app.core.mcp.server import get_streamable_http_app
 
-    _skip_scheduler = os.environ.get("NEXUS_SKIP_SCHEDULER", "").strip().lower() in ("1", "true", "yes")
-    if _skip_scheduler:
-        logger.info("Scheduler disabled via NEXUS_SKIP_SCHEDULER — this worker will not run background jobs")
-    else:
-        start_scheduler()
+            mcp_starlette = get_streamable_http_app("/mcp")
+            await stack.enter_async_context(mcp_starlette.router.lifespan_context(mcp_starlette))
 
-    yield
+        from app.channels.telegram_bot import start_telegram_polling_if_configured
 
-    if not _skip_scheduler:
-        stop_scheduler()
+        start_telegram_polling_if_configured()
+
+        from app.core.training.scheduler import start_scheduler, stop_scheduler
+
+        _skip_scheduler = os.environ.get("NEXUS_SKIP_SCHEDULER", "").strip().lower() in ("1", "true", "yes")
+        if _skip_scheduler:
+            logger.info("Scheduler disabled via NEXUS_SKIP_SCHEDULER — this worker will not run background jobs")
+        else:
+            start_scheduler()
+
+        yield
+
+        if not _skip_scheduler:
+            stop_scheduler()
 
 
 app = FastAPI(
@@ -265,6 +404,16 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestIdMiddleware)
+
+
+@app.middleware("http")
+async def mcp_local_only_guard(request: Request, call_next: RequestResponseEndpoint) -> Response:
+    if settings.LOCAL_ONLY and request.url.path.startswith("/mcp"):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "MCP proxy disabled in LOCAL_ONLY mode"},
+        )
+    return await call_next(request)
 
 
 def _session_secret_key() -> bytes:
@@ -337,5 +486,12 @@ app.include_router(agent_router)
 app.include_router(traces_router)
 app.include_router(critic_router)
 app.include_router(governance_router)
+app.include_router(skills_router)
+app.include_router(mcp_router)
 app.include_router(training_router)
 app.include_router(dashboard_router)
+
+if settings.MCP_ENABLED and not settings.LOCAL_ONLY:
+    from app.core.mcp.server import get_streamable_http_app
+
+    app.mount("/mcp", get_streamable_http_app("/mcp"))

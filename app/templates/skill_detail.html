@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Skill: {{ skill.name }} — Nexus Agent{% endblock %}
+{% block content %}
+<h1>{{ skill.name }}</h1>
+
+<div class="card">
+  <dl class="detail-grid">
+    <dt>ID</dt>
+    <dd class="mono">{{ skill.id }}</dd>
+    <dt>Description</dt>
+    <dd>{{ skill.description or '—' }}</dd>
+    <dt>Status</dt>
+    <dd>
+      {% if not skill.enabled %}
+        <span class="badge badge-denied">disabled</span>
+      {% elif skill.flagged %}
+        <span class="badge badge-flag">flagged</span>
+      {% else %}
+        <span class="badge badge-completed">active</span>
+      {% endif %}
+    </dd>
+    <dt>Expected Reward</dt>
+    <dd>{{ "%.2f"|format(skill.expected_reward) if skill.expected_reward is not none else '—' }}</dd>
+    <dt>Avg Reward</dt>
+    <dd>{{ "%.2f"|format(skill.avg_reward) if skill.avg_reward is not none else 'n/a' }}</dd>
+    <dt>Last Reward</dt>
+    <dd>{{ "%.2f"|format(skill.last_reward) if skill.last_reward is not none else '—' }}</dd>
+    <dt>Total Runs</dt>
+    <dd>{{ skill.total_runs or 0 }}</dd>
+    <dt>Min Threshold</dt>
+    <dd>{{ "%.2f"|format(skill.min_reward_threshold) if skill.min_reward_threshold is not none else '—' }}</dd>
+    <dt>Skill Hash</dt>
+    <dd class="mono">{{ skill.skill_hash[:24] }}…</dd>
+    <dt>Immune Scanned</dt>
+    <dd>{{ 'Yes' if skill.immune_scanned else 'No' }}</dd>
+    <dt>Critic Scanned</dt>
+    <dd>{{ 'Yes' if skill.critic_scanned else 'No' }}</dd>
+    <dt>Source Episode</dt>
+    <dd class="mono">{{ skill.source_episode_id or '—' }}</dd>
+    <dt>Created</dt>
+    <dd>{{ skill.created_at.strftime('%Y-%m-%d %H:%M UTC') if skill.created_at else '—' }}</dd>
+  </dl>
+</div>
+
+<h2>Steps ({{ steps|length }})</h2>
+<div class="card">
+{% if steps %}
+{% for step in steps %}
+  <div style="padding: 8px 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+    <span class="badge badge-completed" style="min-width:30px; text-align:center;">{{ loop.index }}</span>
+    <strong>{{ step.get('action', '?') }}</strong>
+    {% if step.get('tool') %}
+      — <code>{{ step.tool }}</code>
+    {% endif %}
+    {% if step.get('arguments_template') %}
+      <pre style="margin-top:6px; font-size:12px;">{{ step.arguments_template | tojson(indent=2) }}</pre>
+    {% endif %}
+    {% if step.get('content_hint') %}
+      <div class="text-sm text-dim" style="margin-top:4px;">{{ step.content_hint }}</div>
+    {% endif %}
+  </div>
+{% endfor %}
+{% else %}
+  <div class="text-dim">No steps recorded.</div>
+{% endif %}
+</div>
+
+<div class="mt-16" style="display:flex; gap:8px;">
+  <a href="/dashboard/skills" class="btn" style="background:var(--surface-alt); color:var(--text);">← Back to Skills</a>
+  <form method="POST" action="/dashboard/skills/{{ skill.id }}/toggle" style="display:inline;">
+    {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
+    {% if skill.enabled %}
+    <button type="submit" name="enabled" value="false" class="btn btn-yellow">Disable</button>
+    {% else %}
+    <button type="submit" name="enabled" value="true" class="btn btn-green">Enable</button>
+    {% endif %}
+  </form>
+</div>
+{% endblock %}

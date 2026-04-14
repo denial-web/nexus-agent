@@ -64,6 +64,9 @@ def import_dataset(
 
     Calls POST /api/datasets/import.
     """
+    if settings.LOCAL_ONLY:
+        logger.info("LOCAL_ONLY mode — skipping Doctrine Lab dataset import")
+        return {"skipped": True, "reason": "local_only"}
     if not is_configured():
         logger.warning("Doctrine Lab not configured; skipping dataset import")
         return {"skipped": True, "reason": "not_configured"}

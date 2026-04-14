@@ -6,7 +6,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import case, func
@@ -18,6 +18,7 @@ from app.core.training.calibration import get_ece_tracker
 from app.db import get_db
 from app.models.approval_log import ApprovalRequest
 from app.models.labeling_queue import LabelingItem
+from app.models.skill import Skill
 from app.models.trace import Trace
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 _template_dir = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_template_dir))
 templates.env.autoescape = True
+templates.env.globals["local_only"] = settings.LOCAL_ONLY
 
 _CSRF_MAX_AGE = 3600
 
@@ -220,8 +222,7 @@ def cast_vote(
         logger.warning("Dashboard vote failed on %s: %s", request_id, result.error)
         safe_error = html_mod.escape(result.error)
         return HTMLResponse(
-            f"<h1>Vote failed</h1><p>{safe_error}</p>"
-            '<p><a href="/dashboard/approvals">Back to approvals</a></p>',
+            f'<h1>Vote failed</h1><p>{safe_error}</p><p><a href="/dashboard/approvals">Back to approvals</a></p>',
             status_code=result.http_status,
         )
 
@@ -266,3 +267,132 @@ def calibration_dashboard(request: Request) -> Response:
             "accuracy": accuracy,
         },
     )
+
+
+@router.post("/skills/import")
+def skills_import_dashboard(
+    request: Request,
+    db: Session = Depends(get_db),
+    file: UploadFile | None = File(None),
+    url: str | None = Form(None),
+    csrf_token: str | None = Form(None),
+) -> Response:
+    """Import SKILL.md from upload or optional URL (LOCAL_ONLY: upload only)."""
+    from app.core.agent.clawhub_import import import_skill_from_url, import_skill_md
+
+    if not _csrf_valid(request, csrf_token):
+        return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
+    if url and settings.LOCAL_ONLY:
+        return HTMLResponse(
+            "<h1>URL import disabled in LOCAL_ONLY</h1><p><a href=/dashboard/skills>Back</a></p>",
+            status_code=503,
+        )
+    url_clean = (url or "").strip()
+    has_file = file is not None and bool(getattr(file, "filename", None))
+    if url_clean and has_file:
+        return HTMLResponse("<h1>Provide file or URL, not both</h1>", status_code=400)
+    if not url_clean and not has_file:
+        return HTMLResponse("<h1>No file or URL</h1>", status_code=400)
+
+    sid: str | None = None
+    if url_clean:
+        sid = import_skill_from_url(url_clean, db, force=False)
+    else:
+        raw = file.file.read()  # type: ignore[union-attr]
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return HTMLResponse("Invalid UTF-8 file", status_code=400)
+        fname = file.filename or "skill.md"
+        sid = import_skill_md(
+            content=text,
+            db=db,
+            source_label=f"import:upload:{fname}"[:100],
+            force=False,
+        )
+    if not sid:
+        return HTMLResponse(
+            "<h1>Import blocked or failed</h1><p><a href=/dashboard/skills>Back</a></p>",
+            status_code=400,
+        )
+    return RedirectResponse(url=f"/dashboard/skills/{sid}", status_code=303)
+
+
+@router.get("/skills", response_class=HTMLResponse)
+def skills_list(request: Request, db: Session = Depends(get_db)) -> Response:
+    all_skills = db.query(Skill).order_by(Skill.avg_reward.desc().nullslast()).limit(200).all()
+    total = len(all_skills)
+    enabled_count = sum(1 for s in all_skills if s.enabled)
+    flagged_count = sum(1 for s in all_skills if s.flagged)
+
+    skills_data = [
+        {
+            "id": s.id,
+            "name": s.name,
+            "description": s.description or "",
+            "step_count": len(s.steps) if s.steps else 0,
+            "total_runs": s.total_runs or 0,
+            "avg_reward": s.avg_reward,
+            "last_reward": s.last_reward,
+            "enabled": s.enabled,
+            "flagged": s.flagged,
+        }
+        for s in all_skills
+    ]
+
+    csrf_token = _issue_csrf(request)
+    return templates.TemplateResponse(
+        request,
+        "skills.html",
+        {
+            "active": "skills",
+            "skills": skills_data,
+            "total": total,
+            "enabled": enabled_count,
+            "flagged": flagged_count,
+            "csrf_token": csrf_token,
+        },
+    )
+
+
+@router.get("/skills/{skill_id}", response_class=HTMLResponse)
+def skill_detail(skill_id: str, request: Request, db: Session = Depends(get_db)) -> Response:
+    skill = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not skill:
+        return HTMLResponse("<h1>Skill not found</h1>", status_code=404)
+
+    csrf_token = _issue_csrf(request)
+    return templates.TemplateResponse(
+        request,
+        "skill_detail.html",
+        {
+            "active": "skills",
+            "skill": skill,
+            "steps": skill.steps or [],
+            "csrf_token": csrf_token,
+        },
+    )
+
+
+@router.post("/skills/{skill_id}/toggle")
+def toggle_skill_dashboard(
+    request: Request,
+    skill_id: str,
+    enabled: str = Form(...),
+    csrf_token: str | None = Form(None),
+    db: Session = Depends(get_db),
+) -> Response:
+    if not _csrf_valid(request, csrf_token):
+        return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
+
+    skill = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not skill:
+        return HTMLResponse("<h1>Skill not found</h1>", status_code=404)
+
+    skill.enabled = enabled.lower() in ("true", "1", "on")
+    if skill.enabled:
+        skill.flagged = False
+    db.commit()
+    logger.info("Dashboard toggled skill '%s' enabled=%s", skill.name, skill.enabled)
+
+    return RedirectResponse(url=f"/dashboard/skills/{skill_id}", status_code=303)

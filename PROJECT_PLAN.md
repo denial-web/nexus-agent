@@ -130,6 +130,64 @@ Build a production-grade AI agent system that merges a **Zero-Trust Agent Pipeli
 
 ---
 
+## Phase 8: Agentic Loop + Tools + CLI + Telegram ✅ COMPLETE
+
+**What was built:**
+- `app/agent/agent_loop.py` — ReAct-style agent loop with per-step Covernor gating, reflection, critic evaluation, and task-level reward scoring
+- `app/core/agent/types.py`, `registry.py`, `builtin.py` — Pluggable tool system with 5 built-in tools (`shell_exec`, `file_read`, `file_write`, `web_fetch`, `search`), workspace scoping, output truncation, and SSRF protection
+- `app/models/step_trace.py` — Granular per-step audit log (action, tool, args, result, governance decision, reflection)
+- `app/api/agent.py` — `POST /api/agent/agent/run`, `/resume`, `/feedback` endpoints
+- `app/cli.py` — `nexus chat`, `run`, `status`, `approve`, `resume`, `feedback`, `skills` CLI commands
+- `app/channels/telegram_bot.py` — Long-polling Telegram bot adapter
+- Agent tool governance policies seeded on startup
+- `LOCAL_ONLY` mode: blocks all outbound HTTP, remaps cloud model IDs to Ollama
+- Ollama as first-class LLM provider with streaming support
+
+---
+
+## Phase 9: Reward-Scored Memory + Skill Generation ✅ COMPLETE
+
+**What was built:**
+- `app/models/episode.py` — Episodic memory storing task summaries, tool sequences, outcomes, reward scores, trajectories
+- `app/models/skill.py` — Auto-generated reusable workflow templates with immune scanning, reward tracking, and auto-disable
+- `app/core/agent/skills.py` — Skill generation from high-reward episodes, Covernor-gated execution, reward decline detection
+- `app/api/skills.py` — CRUD + execute API: `GET/POST/PATCH/DELETE /api/skills`, `POST /api/skills/{id}/execute`
+- Agent loop skill recall: `_retrieve_skills()` injects matching skill step sequences into the LLM system prompt
+- Agent loop episode recall: `_retrieve_episodes()` injects past experience (successes/failures) as context
+- `export_agent_trajectories()` in the labeler — DPO-format chosen/rejected pairs from reward-scored episodes
+
+---
+
+## Phase 10: Ollama + LOCAL_ONLY ✅ COMPLETE
+
+**What was built:**
+- `LOCAL_ONLY=true` environment variable blocks all outbound network calls
+- LLM routes auto-remap cloud model IDs to `ollama:<default_model>` in both `generate()` and `generate_stream()`
+- `web_fetch` and `search` tools return errors under LOCAL_ONLY
+- Doctrine Lab bridge skips import calls under LOCAL_ONLY
+- Dashboard shows `LOCAL` badge when running in local-only mode
+- SSRF protection: `web_fetch` manually follows redirects, blocks internal/localhost/metadata IPs at every hop
+
+---
+
+## Phase 11: MCP Governance Proxy + ClawHub Skill Import ✅ COMPLETE
+
+**What was built:**
+- **MCP Governance Proxy** (`app/core/mcp/`): FastMCP-based proxy that forwards tool calls to registered MCP backends through Nexus's zero-trust pipeline. Each call runs immune scan → Covernor policy check (namespaced `mcp:{backend}:{tool}`) → forward → hash-chained trace.
+- **Backend registry** (`app/core/mcp/config.py`): JSON file-based registry (`mcp_backends.json`) with dataclass model, supporting `streamable_http`, `sse`, and `stdio` transports.
+- **Governed tools** (`app/core/mcp/proxy.py`): `GovernedMcpTool` wraps each remote tool with immune scanning + Covernor evaluation. `require_approval` returns JSON-RPC error `-32001`. `LOCAL_ONLY` blocks all MCP connections.
+- **HTTP + stdio entrypoints** (`app/core/mcp/server.py`): Streamable HTTP mounted at `/mcp` when `MCP_ENABLED=true`, stdio via `nexus mcp serve`.
+- **Backend CRUD API** (`app/api/mcp.py`): `GET/POST/PATCH/DELETE /api/mcp/backends`, `GET /api/mcp/backends/{name}/tools` with governance annotations.
+- **Trace columns**: `mcp_backend`, `mcp_tool_name` on `Trace` model for MCP audit queries. `MCP_AUDIT_ALL` controls tracing scope.
+- **ClawHub skill import** (`app/core/agent/clawhub_import.py`, `clawhub_convert.py`): Parses SKILL.md (YAML frontmatter + Markdown body), immune-scans content, heuristically converts to Nexus steps (`tool_call`, `instruction`), deduplicates by step hash, persists with `source`, `requirements`, and `raw_source` columns.
+- **`instruction` step type**: `execute_skill()` skips instruction steps but they are injected as LLM context during skill recall.
+- **Import API**: `POST /api/skills/import` (file upload + URL), `GET /api/skills/{id}/source` (raw SKILL.md). Dashboard import form on skills page. `nexus skills import <path|url>` CLI.
+- **Default-deny MCP policy**: `_seed_mcp_policies()` auto-seeds `mcp-default-deny` covering `mcp:*` actions.
+- **`LOCAL_ONLY` guards**: MCP proxy refuses backends, HTTP routes return 503, URL skill import blocked.
+- **20 new tests** across 3 test files (`test_mcp_proxy.py`, `test_clawhub_import.py`, `test_mcp_cli.py`).
+
+---
+
 ## External Resources
 
 ### HuggingFace Datasets
@@ -185,6 +243,8 @@ The central audit log. Every pipeline run creates exactly one trace.
 | status | String(20) | "completed", "blocked", "halted", "pending_approval" |
 | prev_hash | String(64) | Hash chain link to previous trace |
 | trace_hash | String(64) | SHA-256 of this trace's content |
+| mcp_backend | String(120) | MCP backend name (Phase 11, nullable, indexed) |
+| mcp_tool_name | String(200) | MCP tool name (Phase 11, nullable, indexed) |
 | created_at | DateTime | UTC timestamp |
 
 ### critic_registry
@@ -234,7 +294,7 @@ Failure traces awaiting human review for the training flywheel.
 
 ---
 
-## API Reference (29 endpoints)
+## API Reference (40 endpoints)
 
 ### Health & Observability (`app/main.py`)
 - `GET /health` — Liveness check (app name, version)
@@ -243,7 +303,18 @@ Failure traces awaiting human review for the training flywheel.
 
 ### Agent (`app/api/agent.py`)
 - `POST /api/agent/run` — Execute full pipeline. Body: `{"prompt": "...", "session_id": "optional", "model_id": "optional"}`
+- `POST /api/agent/stream` — Stream tokens via SSE. Same body as `/run`.
 - `POST /api/agent/compare` — Multi-model evaluation. Sends prompt to multiple providers in parallel, critic-scores each response, returns the best. Body: `{"prompt": "...", "model_ids": ["gemini-2.5-flash", "gpt-4o-mini"], "session_id": "optional"}`. Omit `model_ids` to use all configured providers.
+- `POST /api/agent/agent/run` — Agentic loop (tools + reflection + reward scoring). Body: `{"prompt": "...", "session_id": "optional", "model_id": "optional", "max_steps": 25}`
+- `POST /api/agent/agent/resume` — Resume agent after human approval. Body: `{"trace_id": "..."}`
+- `POST /api/agent/agent/feedback` — Attach good/bad feedback to a trace. Body: `{"trace_id": "...", "feedback": "good|bad"}`
+
+### Skills (`app/api/skills.py`)
+- `GET /api/skills` — List skills with reward stats. Query: `?enabled_only=true`
+- `GET /api/skills/{id}` — Full skill detail (steps, reward stats, hash, source episode)
+- `POST /api/skills/{id}/execute` — Execute a skill step-by-step with Covernor gating
+- `PATCH /api/skills/{id}` — Enable or disable a skill. Body: `{"enabled": true}`
+- `DELETE /api/skills/{id}` — Permanently delete a skill
 
 ### Traces (`app/api/traces.py`)
 - `GET /api/traces` — List traces. Query: `?session_id=&status=&limit=50&offset=0`
@@ -277,9 +348,20 @@ Failure traces awaiting human review for the training flywheel.
 - `GET /api/training/calibration/snapshots` — List persisted ECE snapshots. Query: `?limit=20`
 - `POST /api/training/lora/compare` — Compare critic before/after LoRA adapter swap
 
+### MCP Governance Proxy (Phase 11)
+- `GET /api/mcp/backends` — List configured MCP backends
+- `POST /api/mcp/backends` — Register a new MCP backend. Body: `{"name": "...", "url": "...", "transport": "streamable_http"}`
+- `PATCH /api/mcp/backends/{name}` — Update a backend's URL, transport, or enabled status
+- `DELETE /api/mcp/backends/{name}` — Remove a backend
+- `GET /api/mcp/backends/{name}/tools` — List tools from a backend with governance annotations (policy status per tool)
+
+### Skill Import (Phase 11)
+- `POST /api/skills/import` — Import a SKILL.md (file upload via `file` or URL via `url` form field). Returns `{"skill_id": "..."}`
+- `GET /api/skills/{id}/source` — Raw SKILL.md content for an imported skill
+
 ---
 
-## Testing — 374+ tests across 20 files
+## Testing — 462+ tests across 25 files
 
 - All tests in `tests/` directory
 - Fixtures in `tests/conftest.py` (test DB, session, TestClient)
@@ -308,6 +390,14 @@ Failure traces awaiting human review for the training flywheel.
 | `test_middleware.py` | API key auth, rate limiting, dashboard auth (login/logout/session) |
 | `test_dashboard_csrf.py` | CSRF token validation for dashboard POST forms |
 | `test_e2e.py` | Full pipeline lifecycle, hash chain, labeling+export, error atomicity, critic halt, approvals, metrics |
+| `test_agent_loop.py` | Agent loop execution, step traces, episodes, max steps, critic halt, API endpoints, trajectory export, tool security |
+| `test_skills.py` | Skill generation, execution, reward decline, API CRUD, skill recall in agent loop |
+| `test_retention.py` | Data retention purge (traces, labeling, approvals, calibration) |
+| `test_stream_endpoint.py` | SSE streaming happy path, blocked input, critic halt, output scan, governance, errors |
+| `test_compare.py` | Multi-model compare endpoint |
+| `test_mcp_proxy.py` | MCP proxy governance, namespaced policies, LOCAL_ONLY, backend CRUD, tool forwarding |
+| `test_clawhub_import.py` | SKILL.md parsing, step conversion, instruction steps, immune blocking, dedup, raw_source |
+| `test_mcp_cli.py` | CLI subcommands: nexus mcp serve/backends/add, nexus skills import |
 
 ---
 

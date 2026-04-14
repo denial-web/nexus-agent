@@ -142,20 +142,25 @@ def process_vote(
             req.resolved_at = datetime.now(UTC)
 
             trace.governance_token_id = token.token_id
-            response_text = trace.response or ""
-            if response_text:
-                out = scan_output(response_text)
-                trace.output_scan_verdict = out.verdict.value
-                if out.verdict == Verdict.BLOCK:
-                    trace.status = "blocked"
-                    trace.error = "Output blocked by immune scanner after approval"
-                else:
-                    trace.status = "completed"
-                    trace.governance_status = "approved"
-                    trace.error = None
+            if req.action_type in ("agent_tool", "agent_final"):
+                trace.governance_status = "approved"
+                trace.status = "pending_agent_resume"
+                trace.error = None
             else:
-                trace.status = "blocked"
-                trace.error = "No response to release"
+                response_text = trace.response or ""
+                if response_text:
+                    out = scan_output(response_text)
+                    trace.output_scan_verdict = out.verdict.value
+                    if out.verdict == Verdict.BLOCK:
+                        trace.status = "blocked"
+                        trace.error = "Output blocked by immune scanner after approval"
+                    else:
+                        trace.status = "completed"
+                        trace.governance_status = "approved"
+                        trace.error = None
+                else:
+                    trace.status = "blocked"
+                    trace.error = "No response to release"
 
             cascade_rehash_from_trace(db, trace.id)
 

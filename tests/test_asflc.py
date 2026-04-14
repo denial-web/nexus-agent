@@ -158,7 +158,7 @@ class TestAnalyzerFallback:
                 side_effect=TypeError("bad event data"),
             ),
         ):
-                result = analyze("This is a long enough prompt to avoid trivial skip for analysis")
+            result = analyze("This is a long enough prompt to avoid trivial skip for analysis")
 
         assert result is not None
         assert result.chosen_path in ("direct_response", "cautious_response")

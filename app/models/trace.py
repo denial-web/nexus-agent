@@ -62,6 +62,19 @@ class Trace(Base):
     prev_hash = Column(String(64), nullable=True)
     trace_hash = Column(String(64), nullable=True)
 
+    # Agentic runs (run_agent / digital employee)
+    run_mode = Column(String(20), nullable=True)  # "pipeline" | "agent"
+    task_reward_score = Column(Float, nullable=True)
+    user_feedback = Column(String(20), nullable=True)  # "good" | "bad"
+    total_steps = Column(Integer, nullable=True)
+    self_corrections = Column(Integer, nullable=True)
+    agent_state = Column(JSON, nullable=True)  # resume payload when pending approval
+    agent_trajectory = Column(JSON, nullable=True)  # full trajectory for training export
+
+    # MCP governance proxy (Phase 11)
+    mcp_backend = Column(String(120), nullable=True, index=True)
+    mcp_tool_name = Column(String(200), nullable=True, index=True)
+
     __table_args__ = (
         Index("ix_trace_session_seq", "session_id", "sequence"),
         Index("ix_trace_status", "status"),

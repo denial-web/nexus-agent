@@ -15,9 +15,9 @@ def _parse_sse(raw_text: str) -> list[dict]:
         ev = {}
         for line in block.strip().splitlines():
             if line.startswith("event: "):
-                ev["event"] = line[len("event: "):]
+                ev["event"] = line[len("event: ") :]
             elif line.startswith("data: "):
-                ev["data"] = json.loads(line[len("data: "):])
+                ev["data"] = json.loads(line[len("data: ") :])
         if ev:
             events.append(ev)
     return events
@@ -120,7 +120,10 @@ class TestStreamCriticHalt:
             patch("app.agent.pipeline.get_arbiter") as mock_arb,
         ):
             mock_arb.return_value.evaluate.return_value = _make_critic(
-                verdict="halt", score=0.1, node="safety", halted_by="safety",
+                verdict="halt",
+                score=0.1,
+                node="safety",
+                halted_by="safety",
             )
 
             resp = client.post("/api/agent/stream", json={"prompt": "Tell me something"})
@@ -242,9 +245,13 @@ class TestStreamGovernanceDeny:
         from app.core.covernor.policy_engine import PolicyDecision
 
         deny_decision = PolicyDecision(
-            action="respond", decision="deny", policy_id="pol-deny",
-            policy_name="block-policy", risk_level="critical",
-            required_approvals=0, reason="Blocked by governance",
+            action="respond",
+            decision="deny",
+            policy_id="pol-deny",
+            policy_name="block-policy",
+            risk_level="critical",
+            required_approvals=0,
+            reason="Blocked by governance",
         )
 
         with (

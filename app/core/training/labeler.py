@@ -205,6 +205,100 @@ def export_for_training(
     return training_data
 
 
+def export_agent_trajectories(
+    min_reward: float = 0.8,
+    max_reward: float = 0.4,
+    batch_size: int = 50,
+    batch_id: str | None = None,
+    db_session: Session | None = None,
+) -> list[dict]:
+    """
+    Export agent trajectories for DPO-style training (Phase 9).
+
+    High-reward episodes (>= min_reward) export as positive examples;
+    low-reward (<= max_reward) as negative. Requires ``episodes`` rows.
+    """
+    if not db_session:
+        return []
+
+    from app.models.episode import Episode
+
+    if not batch_id:
+        batch_id = uuid.uuid4().hex[:12]
+
+    high = (
+        db_session.query(Episode)
+        .filter(Episode.task_reward_score.isnot(None))
+        .filter(Episode.task_reward_score >= min_reward)
+        .order_by(Episode.created_at.asc())
+        .limit(batch_size)
+        .all()
+    )
+    low = (
+        db_session.query(Episode)
+        .filter(Episode.task_reward_score.isnot(None))
+        .filter(Episode.task_reward_score <= max_reward)
+        .order_by(Episode.created_at.asc())
+        .limit(batch_size)
+        .all()
+    )
+
+    out: list[dict] = []
+    for ep in high + low:
+        label = "chosen" if ep.task_reward_score and ep.task_reward_score >= min_reward else "rejected"
+        messages = _trajectory_to_messages(ep)
+        out.append(
+            {
+                "type": "trajectory",
+                "messages": messages,
+                "metadata": {
+                    "trace_id": ep.trace_id,
+                    "task_reward_score": ep.task_reward_score,
+                    "outcome": ep.outcome,
+                    "label": label,
+                    "batch_id": batch_id,
+                    "tool_sequence": ep.tool_sequence,
+                    "step_count": ep.step_count,
+                    "self_corrections": ep.self_corrections,
+                },
+            }
+        )
+
+    logger.info("Exported %d agent trajectory rows (batch=%s)", len(out), batch_id)
+    return out
+
+
+def _trajectory_to_messages(ep: Any) -> list[dict]:
+    """Build multi-turn message list from an episode's stored trajectory."""
+    msgs: list[dict] = [{"role": "user", "content": ep.task_summary}]
+    traj = ep.agent_trajectory
+    if isinstance(traj, list) and traj:
+        for step in traj:
+            if not isinstance(step, dict):
+                continue
+            kind = step.get("kind", "")
+            if kind == "tool":
+                tool_name = step.get("tool", "unknown")
+                args = step.get("arguments", {})
+                msgs.append(
+                    {
+                        "role": "assistant",
+                        "content": f"Calling {tool_name}",
+                        "tool_calls": [{"name": tool_name, "arguments": args}],
+                    }
+                )
+                reflection = step.get("reflection", "")
+                output = f"success={step.get('success')}"
+                if reflection:
+                    output += f" | reflection: {reflection[:500]}"
+                msgs.append({"role": "tool", "content": output, "name": tool_name})
+            elif kind == "final":
+                msgs.append({"role": "assistant", "content": step.get("content", "")[:4000]})
+    else:
+        msgs.append({"role": "assistant", "content": (ep.reflection or "")[:4000]})
+    return msgs
+
+
 def _to_dict(item: Any) -> dict:
     return {
         "id": item.id,

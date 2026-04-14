@@ -47,13 +47,7 @@ def _purge_traces(db: Session, cutoff: datetime) -> int:
 
     total = 0
     while True:
-        ids = [
-            r[0]
-            for r in db.query(Trace.id)
-            .filter(Trace.created_at < cutoff)
-            .limit(_BATCH_SIZE)
-            .all()
-        ]
+        ids = [r[0] for r in db.query(Trace.id).filter(Trace.created_at < cutoff).limit(_BATCH_SIZE).all()]
         if not ids:
             break
         db.query(Trace).filter(Trace.id.in_(ids)).delete(synchronize_session=False)
@@ -108,11 +102,7 @@ def _purge_approval_votes(db: Session, cutoff: datetime) -> int:
     total = 0
     while True:
         ids = [
-            r[0]
-            for r in db.query(ApprovalVote.id)
-            .filter(ApprovalVote.created_at < cutoff)
-            .limit(_BATCH_SIZE)
-            .all()
+            r[0] for r in db.query(ApprovalVote.id).filter(ApprovalVote.created_at < cutoff).limit(_BATCH_SIZE).all()
         ]
         if not ids:
             break

@@ -3,6 +3,7 @@
 import json
 import logging
 import time
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -26,6 +27,40 @@ class CompareRequest(BaseModel):
     prompt: str
     model_ids: list[str] | None = None
     session_id: str | None = None
+
+
+class AgentRunRequest(BaseModel):
+    prompt: str
+    session_id: str | None = None
+    model_id: str | None = None
+    user_feedback: str | None = None
+    resume_state: dict | None = None
+
+
+class AgentRunResponse(BaseModel):
+    trace_id: str
+    session_id: str
+    status: str
+    response: str | None = None
+    error: str | None = None
+    model_id: str | None = None
+    token_count: int | None = None
+    latency_ms: float | None = None
+    task_reward_score: float | None = None
+    total_steps: int | None = None
+    self_corrections: int | None = None
+    approval_request_id: str | None = None
+    agent_state: dict | None = None
+    trajectory: list | None = None
+
+
+class AgentFeedbackRequest(BaseModel):
+    trace_id: str
+    feedback: str  # "good" or "bad"
+
+
+class AgentResumeRequest(BaseModel):
+    trace_id: str
 
 
 class PipelineDetail(BaseModel):
@@ -105,6 +140,105 @@ def run_agent(req: RunRequest, db: Session = Depends(get_db)) -> dict:
     return payload
 
 
+@router.post("/agent/run", response_model=AgentRunResponse)
+def run_agentic(req: AgentRunRequest, db: Session = Depends(get_db)) -> dict:
+    """Multi-step governed agent with tools, reflection, and critic feedback."""
+    from app.agent.agent_loop import run_agent
+
+    if not req.prompt.strip() and not req.resume_state:
+        raise HTTPException(status_code=400, detail="prompt cannot be empty unless resuming")
+
+    max_len = settings.MAX_PROMPT_LENGTH
+    if max_len > 0 and len(req.prompt) > max_len:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Prompt exceeds maximum length of {max_len} characters",
+        )
+
+    r = run_agent(
+        prompt=req.prompt,
+        session_id=req.session_id,
+        model_id=req.model_id,
+        db_session=db,
+        user_feedback=req.user_feedback,
+        resume_state=req.resume_state,
+    )
+    return {
+        "trace_id": r.trace_id,
+        "session_id": r.session_id,
+        "status": r.status,
+        "response": r.response,
+        "error": r.error,
+        "model_id": r.model_id_used,
+        "token_count": r.token_count,
+        "latency_ms": r.latency_ms,
+        "task_reward_score": r.task_reward_score,
+        "total_steps": r.total_steps,
+        "self_corrections": r.self_corrections,
+        "approval_request_id": r.approval_request_id,
+        "agent_state": r.agent_state,
+        "trajectory": r.trajectory,
+    }
+
+
+@router.post("/agent/resume", response_model=AgentRunResponse)
+def resume_agentic(req: AgentResumeRequest, db: Session = Depends(get_db)) -> dict:
+    """Resume an agent run after governance approval (trace status pending_agent_resume)."""
+    from app.agent.agent_loop import run_agent
+    from app.models.trace import Trace
+
+    row = db.query(Trace).filter_by(id=req.trace_id).first()
+    if not row or not row.agent_state:
+        raise HTTPException(status_code=404, detail="Trace not found or no agent state")
+    if row.status != "pending_agent_resume":
+        raise HTTPException(status_code=400, detail=f"Trace not resumable (status={row.status})")
+
+    prompt = row.prompt or ""
+    resume_state = row.agent_state
+    if isinstance(resume_state, dict):
+        r = run_agent(
+            prompt=prompt,
+            session_id=row.session_id,
+            model_id=row.model_id,
+            db_session=db,
+            resume_state=resume_state,
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Invalid agent_state")
+
+    return {
+        "trace_id": r.trace_id,
+        "session_id": r.session_id,
+        "status": r.status,
+        "response": r.response,
+        "error": r.error,
+        "model_id": r.model_id_used,
+        "token_count": r.token_count,
+        "latency_ms": r.latency_ms,
+        "task_reward_score": r.task_reward_score,
+        "total_steps": r.total_steps,
+        "self_corrections": r.self_corrections,
+        "approval_request_id": r.approval_request_id,
+        "agent_state": r.agent_state,
+        "trajectory": r.trajectory,
+    }
+
+
+@router.post("/agent/feedback")
+def agent_feedback(req: AgentFeedbackRequest, db: Session = Depends(get_db)) -> dict:
+    """Attach user reward signal to a completed agent trace."""
+    from app.models.trace import Trace
+
+    if req.feedback not in ("good", "bad"):
+        raise HTTPException(status_code=400, detail="feedback must be 'good' or 'bad'")
+    row = db.query(Trace).filter_by(id=req.trace_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Trace not found")
+    row.user_feedback = req.feedback
+    db.commit()
+    return {"trace_id": req.trace_id, "user_feedback": req.feedback}
+
+
 @router.post("/stream")
 def stream_agent(req: RunRequest, db: Session = Depends(get_db)) -> StreamingResponse:
     """Stream LLM tokens through the zero-trust pipeline via Server-Sent Events."""
@@ -120,7 +254,7 @@ def stream_agent(req: RunRequest, db: Session = Depends(get_db)) -> StreamingRes
             detail=f"Prompt exceeds maximum length of {max_len} characters",
         )
 
-    def _event_generator():
+    def _event_generator() -> Any:
         for event in run_stream(
             prompt=req.prompt,
             session_id=req.session_id,
@@ -276,9 +410,9 @@ def compare_models(req: CompareRequest, db: Session = Depends(get_db)) -> dict:
 
     viable = [c for c in candidates if not c["output_blocked"] and not c["halted"]]
     if viable:
-        winner = max(viable, key=lambda c: c["aggregate_score"])
+        winner = max(viable, key=lambda c: float(c["aggregate_score"]))
     else:
-        winner = max(candidates, key=lambda c: c["aggregate_score"])
+        winner = max(candidates, key=lambda c: float(c["aggregate_score"]))
 
     from app.core.covernor.policy_engine import evaluate_action
 

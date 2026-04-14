@@ -30,6 +30,7 @@ from app.metrics import PIPELINE_LATENCY, PIPELINE_RUNS, record_critic_scores
 
 logger = logging.getLogger(__name__)
 
+
 def _serialize_scores(scores: dict) -> dict:
     """Convert CriticScore dataclass objects to JSON-safe dicts."""
     out = {}
@@ -65,6 +66,14 @@ class PipelineResult:
     model_id_used: str | None = None
     token_count: int | None = None
     approval_request_id: str | None = None
+    # Agentic run metadata (optional)
+    run_mode: str | None = None
+    task_reward_score: float | None = None
+    user_feedback: str | None = None
+    total_steps: int | None = None
+    self_corrections: int | None = None
+    agent_state: dict | None = None
+    agent_trajectory: list | None = None
 
 
 def invalidate_arbiter_cache() -> None:
@@ -379,8 +388,11 @@ def run_stream(
         result.latency_ms = _elapsed(start)
         if db_session:
             _push_pipeline_failure(
-                trace_id=trace_id, source_node="immune", failure_type="injection",
-                prompt=prompt, response=None,
+                trace_id=trace_id,
+                source_node="immune",
+                failure_type="injection",
+                prompt=prompt,
+                response=None,
                 detail={"stage": "input_scan", "immune_input": result.immune_input},
                 db_session=db_session,
             )
@@ -403,8 +415,11 @@ def run_stream(
                 result.latency_ms = _elapsed(start)
                 if db_session:
                     _push_pipeline_failure(
-                        trace_id=trace_id, source_node="immune", failure_type="injection",
-                        prompt=prompt, response=None,
+                        trace_id=trace_id,
+                        source_node="immune",
+                        failure_type="injection",
+                        prompt=prompt,
+                        response=None,
                         detail={"stage": "input_hardening_empty", "immune_input": result.immune_input},
                         db_session=db_session,
                     )
@@ -444,8 +459,11 @@ def run_stream(
         result.latency_ms = _elapsed(start)
         if db_session:
             _push_pipeline_failure(
-                trace_id=trace_id, source_node="pipeline", failure_type="pipeline_error",
-                prompt=prompt, response=None,
+                trace_id=trace_id,
+                source_node="pipeline",
+                failure_type="pipeline_error",
+                prompt=prompt,
+                response=None,
                 detail={"stage": "llm_stream", "error": str(exc)},
                 db_session=db_session,
             )
@@ -481,8 +499,11 @@ def run_stream(
         result.latency_ms = _elapsed(start)
         if db_session:
             _push_pipeline_failure(
-                trace_id=trace_id, source_node="critic", failure_type="pipeline_error",
-                prompt=prompt, response=response,
+                trace_id=trace_id,
+                source_node="critic",
+                failure_type="pipeline_error",
+                prompt=prompt,
+                response=response,
                 detail={"stage": "critic_evaluation", "error": str(exc)},
                 db_session=db_session,
             )
@@ -499,7 +520,9 @@ def run_stream(
         "halted_by": critic_result.halted_by,
     }
     record_critic_calibration(
-        critic_scores=critic_result.scores, actual_verdict=critic_result.verdict, trace_id=trace_id,
+        critic_scores=critic_result.scores,
+        actual_verdict=critic_result.verdict,
+        trace_id=trace_id,
     )
     record_critic_scores(critic_result.scores)
 
@@ -528,8 +551,11 @@ def run_stream(
         result.latency_ms = _elapsed(start)
         if db_session:
             _push_pipeline_failure(
-                trace_id=trace_id, source_node="covernor", failure_type="governance",
-                prompt=prompt, response=response,
+                trace_id=trace_id,
+                source_node="covernor",
+                failure_type="governance",
+                prompt=prompt,
+                response=response,
                 detail={"stage": "governance", "governance": result.governance, "reason": gov_decision.reason},
                 db_session=db_session,
             )
@@ -587,8 +613,11 @@ def run_stream(
         result.latency_ms = _elapsed(start)
         if db_session:
             _push_pipeline_failure(
-                trace_id=trace_id, source_node="immune", failure_type="safety",
-                prompt=prompt, response=response,
+                trace_id=trace_id,
+                source_node="immune",
+                failure_type="safety",
+                prompt=prompt,
+                response=response,
                 detail={"stage": "output_scan", "immune_output": result.immune_output},
                 db_session=db_session,
             )
@@ -679,6 +708,13 @@ def _persist_trace(result: PipelineResult, prompt: str, db_session: Session | No
         token_count=result.token_count,
         prev_hash=prev_hash,
         trace_hash=trace_hash,
+        run_mode=result.run_mode,
+        task_reward_score=result.task_reward_score,
+        user_feedback=result.user_feedback,
+        total_steps=result.total_steps,
+        self_corrections=result.self_corrections,
+        agent_state=result.agent_state,
+        agent_trajectory=result.agent_trajectory,
     )
 
     try:

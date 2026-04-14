@@ -299,7 +299,6 @@ class TestCompareEndpoint:
         assert data["status"] == "completed"
         mock_harden.assert_called_once()
 
-
     def test_compare_critic_exception_handled(self, client):
         with patch("app.core.llm.provider.generate") as mock_gen:
             mock_gen.return_value = _mock_response("mock", "mock", "response text here")
@@ -323,9 +322,13 @@ class TestCompareGovernance:
         from app.core.covernor.policy_engine import PolicyDecision
 
         deny = PolicyDecision(
-            action="respond", decision="deny", policy_id="p1",
-            policy_name="block-all", risk_level="critical",
-            required_approvals=0, reason="Denied by policy",
+            action="respond",
+            decision="deny",
+            policy_id="p1",
+            policy_name="block-all",
+            risk_level="critical",
+            required_approvals=0,
+            reason="Denied by policy",
         )
 
         with (
@@ -346,9 +349,13 @@ class TestCompareGovernance:
         from app.core.covernor.policy_engine import PolicyDecision
 
         approval = PolicyDecision(
-            action="respond", decision="require_approval", policy_id="p2",
-            policy_name="needs-review", risk_level="high",
-            required_approvals=2, reason="Requires approval",
+            action="respond",
+            decision="require_approval",
+            policy_id="p2",
+            policy_name="needs-review",
+            risk_level="high",
+            required_approvals=2,
+            reason="Requires approval",
         )
 
         with (

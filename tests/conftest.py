@@ -14,9 +14,9 @@ os.environ["OPENAI_API_KEY"] = ""
 os.environ["DEEPSEEK_API_KEY"] = ""
 os.environ["EXPOSE_METRICS"] = "true"
 
-from app.db import Base
-from app.main import app
-from fastapi.testclient import TestClient
+from app.db import Base  # noqa: E402
+from app.main import app  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 
 @pytest.fixture(scope="session")

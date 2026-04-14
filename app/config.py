@@ -67,5 +67,34 @@ class Settings(BaseSettings):
         """Return the configured session secret, or dev fallback in dev/test."""
         return self.SESSION_SECRET.strip() or self._DEV_SESSION_SECRET
 
+    # Agentic loop (Phase 8+)
+    AGENT_MAX_STEPS: int = 15
+    AGENT_WORKSPACE: str = ""  # empty = cwd
+    AGENT_SHELL_TIMEOUT: float = 30.0
+    AGENT_TOOL_OUTPUT_MAX_CHARS: int = 24_000
+    AGENT_REFLECT_ON_SUCCESS: bool = True
+    AGENT_CRITIC_EVERY_N_STEPS: int = 1
+    AGENT_USE_ASFLC: bool = False
+    TAVILY_API_KEY: str = ""
+    SERPAPI_API_KEY: str = ""
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_POLL_TIMEOUT: int = 30
+    NEXUS_API_BASE_URL: str = "http://127.0.0.1:9000"
+
+    # Local-only mode: block external LLM/tool network (Phase 10)
+    LOCAL_ONLY: bool = False
+
+    # Ollama (OpenAI-compatible API) — use model_id `ollama:your-model`
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434/v1"
+    OLLAMA_API_KEY: str = "ollama"  # OpenAI client requires non-empty dummy key
+    OLLAMA_DEFAULT_MODEL: str = "llama3.2"
+    OLLAMA_LIST_IN_PROVIDERS: bool = False  # when True, include in get_available_providers()
+
+    # MCP governance proxy (Phase 11)
+    MCP_ENABLED: bool = False
+    MCP_BACKENDS_FILE: str = "mcp_backends.json"
+    MCP_DEFAULT_POLICY: str = "deny"  # informational; policies live in DB
+    MCP_AUDIT_ALL: bool = True  # False = trace only denied/blocked/immune-block
+
 
 settings = Settings()
