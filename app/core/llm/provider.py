@@ -22,9 +22,10 @@ from collections.abc import Generator
 from typing import Any
 
 from app.config import settings
+from app.core.llm.cache import get_cache, reset_cache
 from app.core.llm.circuit_breaker import CircuitOpenError, get_registry
 from app.core.llm.models import LLMChunk, LLMResponse
-from app.metrics import CB_FALLBACKS, CB_REJECTIONS, LLM_CALLS, LLM_ERRORS
+from app.metrics import CACHE_HITS, CACHE_MISSES, CB_FALLBACKS, CB_REJECTIONS, LLM_CALLS, LLM_ERRORS
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,7 @@ def reset_clients() -> None:
     from app.core.llm.circuit_breaker import reset_registry
 
     reset_registry()
+    reset_cache()
 
 
 def mock_llm_text(prompt: str) -> str:
@@ -528,6 +530,21 @@ def generate(
     route_provider, resolved_model, api_key = _resolve_route(eff_model_id)
     start = time.perf_counter()
 
+    cache = get_cache()
+    cached = cache.get(prompt, eff_model_id, system_prompt)
+    if cached is not None:
+        CACHE_HITS.inc()
+        latency_ms = (time.perf_counter() - start) * 1000
+        return LLMResponse(
+            text=cached.text,
+            model_id=cached.model_id,
+            token_count=cached.token_count,
+            latency_ms=round(latency_ms, 2),
+            provider=cached.provider,
+            raw_response=cached.raw_response,
+        )
+    CACHE_MISSES.inc()
+
     if route_provider == "mock":
         return _mock_response(prompt, start)
 
@@ -536,7 +553,7 @@ def generate(
     if route_provider == "local":
         text, used_model, token_count, raw = _call_local_hf(prompt, resolved_model, system_prompt)
         latency_ms = (time.perf_counter() - start) * 1000
-        return LLMResponse(
+        resp = LLMResponse(
             text=text,
             model_id=used_model,
             token_count=token_count,
@@ -544,11 +561,13 @@ def generate(
             provider="local",
             raw_response=raw,
         )
+        cache.put(prompt, eff_model_id, system_prompt, resp)
+        return resp
 
     if route_provider == "ollama":
         text, used_model, token_count, raw = _call_ollama(prompt, resolved_model, system_prompt)
         latency_ms = (time.perf_counter() - start) * 1000
-        return LLMResponse(
+        resp = LLMResponse(
             text=text,
             model_id=used_model,
             token_count=token_count,
@@ -556,6 +575,8 @@ def generate(
             provider="ollama",
             raw_response=raw,
         )
+        cache.put(prompt, eff_model_id, system_prompt, resp)
+        return resp
 
     cb = get_registry().get(route_provider)
     if not cb.allow_request():
@@ -572,9 +593,11 @@ def generate(
                 fallback_provider=fb_provider,
             ).inc()
             LLM_CALLS.labels(provider=fb_provider).inc()
-            return _generate_with_retries(
+            resp = _generate_with_retries(
                 prompt, fb_provider, fb_model, fb_key, system_prompt, start,
             )
+            cache.put(prompt, eff_model_id, system_prompt, resp)
+            return resp
         if settings.CB_FALLBACK_TO_MOCK:
             logger.warning(
                 "Circuit open for %s, no fallback available — using mock",
@@ -587,9 +610,11 @@ def generate(
             return _mock_response(prompt, start)
         raise CircuitOpenError(route_provider)
 
-    return _generate_with_retries(
+    resp = _generate_with_retries(
         prompt, route_provider, resolved_model, api_key, system_prompt, start,
     )
+    cache.put(prompt, eff_model_id, system_prompt, resp)
+    return resp
 
 
 def get_available_providers() -> list[dict[str, str]]:

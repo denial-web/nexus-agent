@@ -477,3 +477,28 @@ def run_security_benchmark(body: BenchmarkRequest) -> dict:
     elif body.threshold is not None:
         result["gate"] = "passed"
     return result
+
+
+# ── Cache & Circuit Breaker Status ─────────────────────────────────
+
+
+@router.get("/cache/stats")
+def cache_stats() -> dict:
+    from app.core.llm.cache import get_cache
+
+    return get_cache().get_stats()
+
+
+@router.delete("/cache")
+def cache_clear() -> dict:
+    from app.core.llm.cache import get_cache
+
+    cleared = get_cache().clear()
+    return {"cleared": cleared}
+
+
+@router.get("/circuit-breakers")
+def circuit_breaker_status() -> dict:
+    from app.core.llm.circuit_breaker import get_registry
+
+    return {"breakers": get_registry().get_all_status()}

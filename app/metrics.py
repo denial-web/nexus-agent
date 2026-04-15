@@ -66,6 +66,14 @@ try:
         "Requests routed to fallback provider due to open circuit",
         ["original_provider", "fallback_provider"],
     )
+    CACHE_HITS = Counter(
+        "nexus_llm_cache_hits_total",
+        "LLM response cache hits",
+    )
+    CACHE_MISSES = Counter(
+        "nexus_llm_cache_misses_total",
+        "LLM response cache misses",
+    )
     _HAS_PROMETHEUS = True
 
 except ImportError:
@@ -100,6 +108,8 @@ except ImportError:
     CB_STATE_CHANGES = _noop
     CB_REJECTIONS = _noop
     CB_FALLBACKS = _noop
+    CACHE_HITS = _noop
+    CACHE_MISSES = _noop
 
     logger.debug("prometheus_client not installed; metrics are no-ops")
 

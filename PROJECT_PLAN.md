@@ -309,6 +309,9 @@ Failure traces awaiting human review for the training flywheel.
 - `POST /api/agent/agent/resume` — Resume agent after human approval. Body: `{"trace_id": "..."}`
 - `POST /api/agent/agent/feedback` — Attach good/bad feedback to a trace. Body: `{"trace_id": "...", "feedback": "good|bad"}`
 - `POST /api/agent/benchmark` — Run security benchmark against the immune scanner. Body: `{"categories": ["encoding_evasion"], "threshold": 0.95}`. Returns per-category detection rates and composite score with optional gate pass/fail.
+- `GET /api/agent/cache/stats` — LLM response cache statistics (hits, misses, size, hit rate, TTL).
+- `DELETE /api/agent/cache` — Clear the LLM response cache. Returns `{"cleared": N}`.
+- `GET /api/agent/circuit-breakers` — Per-provider circuit breaker status (state, recent failures, thresholds).
 
 ### Skills (`app/api/skills.py`)
 - `GET /api/skills` — List skills with reward stats. Query: `?enabled_only=true`
@@ -362,7 +365,7 @@ Failure traces awaiting human review for the training flywheel.
 
 ---
 
-## Testing — 602+ tests across 29 files
+## Testing — 626+ tests across 30 files
 
 - All tests in `tests/` directory
 - Fixtures in `tests/conftest.py` (test DB, session, TestClient)
@@ -402,6 +405,7 @@ Failure traces awaiting human review for the training flywheel.
 | `test_redteam.py` | Adversarial red-team: encoding evasion, structural injection, multi-language advanced, indirect attacks, compound/chained, output scan, hardener edge cases, memory bank, false-positive resilience |
 | `test_benchmark.py` | Security benchmark: runner, per-category scoring, API endpoint, CLI commands, attack registry integrity, CI gating |
 | `test_circuit_breaker.py` | Circuit breaker state machine, rolling window, half-open recovery, provider fallback chain, concurrent access, stream fallback |
+| `test_llm_cache.py` | LLM response cache: hit/miss, TTL expiry, LRU eviction, invalidation, stats, concurrency, provider integration, security invariants (governance not bypassed), API endpoints |
 
 ---
 

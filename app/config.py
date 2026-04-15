@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     CB_WINDOW_SECONDS: float = 60.0
     CB_FALLBACK_TO_MOCK: bool = True
 
+    # LLM response cache (exact-match, in-process)
+    LLM_CACHE_ENABLED: bool = False
+    LLM_CACHE_TTL: float = 300.0
+    LLM_CACHE_MAX_ENTRIES: int = 1000
+
     # Critic defaults
     CRITIC_MODEL: str = ""
     CRITIC_CHUNK_SIZE: int = 64

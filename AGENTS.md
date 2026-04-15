@@ -93,7 +93,7 @@ app/
 - **Pydantic v2** — use `model_config = ConfigDict(...)`, not `class Config`
 - **SQLAlchemy 2.0** style — `Column()`, `declarative_base()`
 - **Logging** — `logger = logging.getLogger(__name__)`, never `print()`
-- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 602 tests across 29 test files. CI runs against both SQLite and Postgres 16.
+- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 626 tests across 30 test files. CI runs against both SQLite and Postgres 16.
 - **Alembic** — `render_as_batch=True` for SQLite, dialect-aware migrations (e.g., `USING` casts for Postgres)
 
 ## Pipeline Flow (app/agent/pipeline.py)
@@ -126,7 +126,7 @@ response. Events:
 
 ## Current State — All Phases Complete
 
-**602 passing tests** across 29 test files.
+**626 passing tests** across 30 test files.
 
 **Completed phases:**
 - **Phase 1**: Foundation — pipeline, models, immune scanner, arbiter, governance, tests
@@ -200,6 +200,7 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 - **Security benchmark**: `nexus benchmark` CLI command and `POST /api/agent/benchmark` endpoint. Runs 65 categorized attack payloads against the immune scanner, produces per-category detection rates and a composite security score. Supports `--json` for CI integration and `--threshold` for deployment gating (e.g. `nexus benchmark --threshold 0.95`).
 - **CI pipeline**: Three parallel GitHub Actions jobs — `lint` (ruff, mypy, pip-audit), `test-sqlite`, `test-postgres` (service container with Postgres 16). The Postgres job catches dialect mismatches (e.g., implicit type casts) that SQLite silently accepts.
 - **Circuit breaker**: Per-provider circuit breaker (`app/core/llm/circuit_breaker.py`) with CLOSED → OPEN → HALF_OPEN state machine. After `CB_FAILURE_THRESHOLD` failures within `CB_WINDOW_SECONDS`, the circuit opens and fast-fails requests. After `CB_RECOVERY_TIMEOUT` seconds, a probe request tests recovery. Automatic fallback chain: Gemini → OpenAI → DeepSeek → mock (configurable via `CB_FALLBACK_TO_MOCK`). Thread-safe with rolling failure window. Prometheus metrics: `nexus_circuit_breaker_state_changes_total`, `nexus_circuit_breaker_rejections_total`, `nexus_circuit_breaker_fallbacks_total`.
+- **LLM response cache**: Exact-match in-process LRU cache (`app/core/llm/cache.py`) keyed on `(prompt_hash, model_id, system_prompt_hash)`. Disabled by default (`LLM_CACHE_ENABLED=false`). Cached responses **still pass through** critic evaluation, governance, and output scan — only the LLM call is skipped. TTL eviction (`LLM_CACHE_TTL`, default 300s), max entries (`LLM_CACHE_MAX_ENTRIES`, default 1000). Thread-safe `OrderedDict` LRU. API: `GET /api/agent/cache/stats`, `DELETE /api/agent/cache`. Prometheus metrics: `nexus_llm_cache_hits_total`, `nexus_llm_cache_misses_total`. Use Redis for multi-worker deployments.
 - **Concurrency safety**: Rate limiter uses `asyncio.Lock` for safe concurrent request counting. LLM client singletons use `threading.Lock` (double-checked locking) to prevent duplicate initialization under concurrent `generate_multi` threads. ECDSA key init likewise uses `threading.Lock`. Circuit breakers use per-instance `threading.Lock` for state transitions.
 - **Capability token lifecycle**: Consumed tokens are immediately deleted from the in-memory store. When the store reaches 10 000 entries, expired and used tokens are evicted before new issuance.
 - **Data retention**: Set `RETENTION_TRACE_DAYS`, `RETENTION_LABELING_DAYS`, `RETENTION_APPROVAL_DAYS`, `RETENTION_CALIBRATION_DAYS` to non-zero values to enable automatic purge. The scheduler runs retention every 12 cycles (~1h). Only terminal-state rows are purged (never pending work). For very large tables, consider DB partitioning as a complement.
