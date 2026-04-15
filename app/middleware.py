@@ -4,8 +4,6 @@ import asyncio
 import hashlib
 import hmac
 import logging
-import time
-from collections import defaultdict
 from typing import Any
 
 from fastapi import Request, Response
@@ -107,33 +105,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     training exports, fine-tune triggers, and critic re-evaluations.
     Limit configurable via RATE_LIMIT_RPM. Disabled when RATE_LIMIT_RPM is 0.
 
-    NOTE: Timestamps are held in-process memory, so this limiter is only
-    accurate for single-worker deployments (uvicorn without --workers).
-    For multi-worker or multi-instance setups, replace with a Redis-backed
-    counter (e.g. redis INCR + EXPIRE sliding window).
+    Backend: Redis (multi-worker) when REDIS_URL is set, otherwise in-process.
     """
-
-    _EVICT_INTERVAL = 300.0
 
     def __init__(self, app: ASGIApp, **kwargs: Any) -> None:
         super().__init__(app, **kwargs)
-        self._requests: dict[str, list[float]] = defaultdict(list)
-        self._last_evict: float = time.time()
         self._lock = asyncio.Lock()
         global _rate_limiter_instance
         _rate_limiter_instance = self
 
     def reset(self) -> None:
-        self._requests.clear()
+        from app.services.rate_limiter import get_backend
 
-    def _evict_idle_ips(self, now: float) -> None:
-        if now - self._last_evict < self._EVICT_INTERVAL:
-            return
-        self._last_evict = now
-        window_start = now - 60.0
-        stale = [ip for ip, ts in self._requests.items() if not ts or ts[-1] <= window_start]
-        for ip in stale:
-            del self._requests[ip]
+        get_backend().reset()
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         rpm = settings.RATE_LIMIT_RPM
@@ -146,22 +130,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         client_ip = request.client.host if request.client else "unknown"
 
         async with self._lock:
-            now = time.time()
-            window_start = now - 60.0
+            from app.services.rate_limiter import get_backend
 
-            self._evict_idle_ips(now)
-
-            timestamps = self._requests[client_ip]
-            self._requests[client_ip] = [t for t in timestamps if t > window_start]
-
-            if len(self._requests[client_ip]) >= rpm:
-                logger.warning("Rate limit exceeded for %s (%d/%d RPM)", client_ip, len(self._requests[client_ip]), rpm)
+            backend = get_backend()
+            if not backend.is_allowed(client_ip, rpm, 60):
+                logger.warning("Rate limit exceeded for %s (%d RPM, backend=%s)", client_ip, rpm, backend.backend_type)
                 return JSONResponse(
                     status_code=429,
                     content={"detail": f"Rate limit exceeded. Max {rpm} requests per minute."},
                     headers={"Retry-After": "60"},
                 )
-
-            self._requests[client_ip].append(now)
 
         return await call_next(request)

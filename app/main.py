@@ -328,7 +328,7 @@ def _validate_production_config() -> None:
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
-    """Assign a unique request ID to every request for log correlation."""
+    """Assign a unique request ID and propagate OTel trace context."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:16]
@@ -336,6 +336,14 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
             response.headers["X-Request-ID"] = rid
+            try:
+                from app.tracing import get_current_trace_context
+
+                ctx = get_current_trace_context()
+                if ctx["trace_id"] != "-":
+                    response.headers["X-Trace-ID"] = ctx["trace_id"]
+            except Exception:
+                pass
             return response
         finally:
             request_id_var.reset(token)
@@ -523,6 +531,13 @@ def readiness_check() -> Response:
         checks["tracing"] = {"enabled": is_enabled(), "available": is_available()}
     except Exception:
         checks["tracing"] = {"enabled": False, "available": False}
+
+    try:
+        from app.services.rate_limiter import get_status as rl_status
+
+        checks["rate_limiter"] = rl_status()
+    except Exception:
+        checks["rate_limiter"] = {"backend_type": "unknown"}
 
     checks["webhooks_enabled"] = settings.WEBHOOKS_ENABLED
     checks["mcp_enabled"] = settings.MCP_ENABLED

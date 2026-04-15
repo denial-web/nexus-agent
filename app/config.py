@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     WEBHOOKS_ENABLED: bool = False
     WEBHOOK_WORKERS: int = 2
 
+    # Redis (multi-worker rate limiting, future caching)
+    REDIS_URL: str = ""
+
     # OpenTelemetry distributed tracing
     OTEL_ENABLED: bool = False
     OTEL_SERVICE_NAME: str = "nexus-agent"

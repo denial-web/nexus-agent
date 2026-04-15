@@ -71,6 +71,7 @@ app/
 │   ├── integrity.py        # Hash-chain computation and verification
 │   ├── replay.py           # Critic re-evaluation service
 │   ├── doctrine_bridge.py  # Doctrine Lab HTTP client
+│   ├── rate_limiter.py     # Rate limiter backends (in-process + Redis)
 │   ├── retention.py        # Scheduled data purge for old rows
 │   └── webhooks.py         # HMAC-signed webhook dispatcher (async, retries)
 ├── tracing.py              # OpenTelemetry distributed tracing (optional, no-op when disabled)
@@ -96,7 +97,7 @@ app/
 - **Pydantic v2** — use `model_config = ConfigDict(...)`, not `class Config`
 - **SQLAlchemy 2.0** style — `Column()`, `declarative_base()`
 - **Logging** — `logger = logging.getLogger(__name__)`, never `print()`
-- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 675 tests across 32 test files. CI runs against both SQLite and Postgres 16.
+- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 697 tests across 33 test files. CI runs against both SQLite and Postgres 16.
 - **Alembic** — `render_as_batch=True` for SQLite, dialect-aware migrations (e.g., `USING` casts for Postgres)
 
 ## Pipeline Flow (app/agent/pipeline.py)
@@ -129,7 +130,7 @@ response. Events:
 
 ## Current State — All Phases Complete
 
-**675 passing tests** across 32 test files.
+**697 passing tests** across 33 test files.
 
 **Completed phases:**
 - **Phase 1**: Foundation — pipeline, models, immune scanner, arbiter, governance, tests
@@ -181,7 +182,7 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 - **Dashboard vote error surfacing**: Dashboard vote endpoint returns an error page with the failure message (and back-link) instead of silently redirecting on error.
 - **Secure-by-default metrics**: `EXPOSE_METRICS` defaults to `False`; operators must opt in via `.env`.
 - **Structured logging**: JSON log output in production (machine-parseable for ELK/CloudWatch); human-readable text in development. Every log line includes `request_id`, `trace_id`, and `span_id` for full log-trace correlation. When OTel tracing is active, logs automatically carry the current trace/span context, enabling one-click jumps from log entries to distributed traces in Jaeger/Tempo/Datadog.
-- **Request correlation**: `RequestIdMiddleware` assigns a unique ID to every request (or echoes the incoming `X-Request-ID` header). The ID is stored in a `contextvars.ContextVar` accessible from any logger, and returned in the `X-Request-ID` response header.
+- **Request correlation**: `RequestIdMiddleware` assigns a unique ID to every request (or echoes the incoming `X-Request-ID` header). The ID is stored in a `contextvars.ContextVar` accessible from any logger, and returned in the `X-Request-ID` response header. When OTel tracing is active, the `X-Trace-ID` response header contains the OTel trace ID for frontend-to-backend trace correlation.
 - **Skill recall**: Before the agent's first LLM call, `_retrieve_skills` keyword-matches enabled skills by description and injects their step sequences into the system prompt so the agent can follow proven workflows. Skills are ranked by `avg_reward`. A full REST API (`/api/skills`) provides list, get, execute, enable/disable, and delete operations — all Covernor-gated on execution.
 - **Data retention**: Configurable per-table purge via `RETENTION_*_DAYS` env vars (0 = disabled). Runs every 12 scheduler cycles (~1 hour at default 5min interval). Only purges terminal-state rows (exported labeling items, resolved approvals) — never deletes pending work.
 - **Multi-worker guard**: `NEXUS_SKIP_SCHEDULER=1` disables the background scheduler on secondary workers. Production startup logs a warning about in-process-only state (rate limits, tokens, scheduler).
@@ -192,7 +193,7 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 ## Operational Notes
 
 - **Persist failure**: If the DB commit fails after LLM generation, the client gets a 500 and no trace is recorded. Monitor logs for `"Failed to persist trace"` — repeated occurrences indicate database connectivity or disk-space issues.
-- **Rate limiting**: Applied to all expensive POST endpoints (`/api/agent/run`, `/api/agent/stream`, `/api/agent/compare`, `/api/training/lora/compare`, `/api/training/export`, `/dashboard/login`, etc.). Configurable via `RATE_LIMIT_RPM`. In-process memory only — use Redis for multi-worker deployments.
+- **Rate limiting**: Applied to all expensive POST endpoints (`/api/agent/run`, `/api/agent/stream`, `/api/agent/compare`, `/api/training/lora/compare`, `/api/training/export`, `/dashboard/login`, etc.). Configurable via `RATE_LIMIT_RPM`. Backend: Redis sliding-window (`INCR` + `EXPIRE`) when `REDIS_URL` is set (multi-worker safe), otherwise in-process memory. Auto-fallback: if Redis is unreachable at startup, falls back to in-process. Redis failures at runtime are fail-open (requests allowed through). Backend status visible in `GET /health/ready`.
 - **Dashboard auth**: When `NEXUS_API_KEY` is set, `/dashboard` requires login via POST form. Session-based after first login. Query-string API key authentication is not supported (prevents credential leakage in logs/Referer headers). Unauthenticated in development mode.
 - **Production startup checks**: Both `NEXUS_API_KEY` and `SESSION_SECRET` must be set in non-development environments — the app refuses to start without them. Generate with: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 - **Health checks**: `GET /health` (liveness, always 200), `GET /health/ready` (readiness, 200 or 503). Readiness probes: database connectivity, LLM provider count, circuit breaker states (open circuits listed), LLM cache status (enabled, size, hit rate), OTel tracing status, webhooks/MCP enabled flags, uptime. Use for Kubernetes liveness/readiness probes.

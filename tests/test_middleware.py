@@ -184,6 +184,9 @@ class TestSafeKeyCompare:
 class TestRateLimitMiddleware:
     @pytest.fixture(autouse=True)
     def _clear_rate_limits(self, client):
+        from app.services.rate_limiter import reset_backend
+
+        reset_backend()
         if mw_module._rate_limiter_instance is not None:
             mw_module._rate_limiter_instance.reset()
 
@@ -230,7 +233,7 @@ class TestRateLimitMiddleware:
         resp = client.post("/api/agent/run", json={"prompt": "blocked"})
         assert resp.status_code == 429
 
-        with patch("app.middleware.time") as mock_time:
+        with patch("app.services.rate_limiter.time") as mock_time:
             mock_time.time.return_value = 9999999999.0
             resp = client.post("/api/agent/run", json={"prompt": "after window"})
             assert resp.status_code == 200
