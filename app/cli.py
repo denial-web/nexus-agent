@@ -202,6 +202,59 @@ def cmd_skills_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benchmark(args: argparse.Namespace) -> int:
+    from app.core.immune.benchmark import AttackCategory, run_benchmark
+
+    cats = args.categories.split(",") if args.categories else None
+    if cats:
+        valid = {c.value for c in AttackCategory}
+        bad = [c for c in cats if c not in valid]
+        if bad:
+            print(f"Unknown categories: {', '.join(bad)}", file=sys.stderr)
+            print(f"Valid: {', '.join(sorted(valid))}", file=sys.stderr)
+            return 1
+
+    report = run_benchmark(categories=cats)
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0 if report.total_failed == 0 else 1
+
+    print(f"\n{'=' * 60}")
+    print(" Nexus Security Benchmark")
+    print(f"{'=' * 60}")
+    print(f" Timestamp:  {report.timestamp}")
+    print(f" Duration:   {report.duration_ms:.1f}ms")
+    print(f" Score:      {report.composite_score:.1%}")
+    print(f" Payloads:   {report.total_passed}/{report.total_payloads} passed")
+    print(f"{'─' * 60}")
+    for cat in report.categories:
+        status = "PASS" if cat.failed == 0 else "FAIL"
+        bar_len = 20
+        filled = int(cat.detection_rate * bar_len)
+        bar = "\u2588" * filled + "\u2591" * (bar_len - filled)
+        print(f" [{status:4s}] {cat.category:<25s} {bar} {cat.detection_rate:6.1%}  ({cat.passed}/{cat.total})")
+        if cat.payloads_failed:
+            for label in cat.payloads_failed:
+                print(f"          - {label}")
+    print(f"{'=' * 60}")
+
+    if report.total_failed == 0:
+        print(" Result: ALL CLEAR")
+    else:
+        print(f" Result: {report.total_failed} FAILURE(S)")
+
+    if args.threshold:
+        threshold = float(args.threshold)
+        if report.composite_score < threshold:
+            print(f" GATE FAILED: score {report.composite_score:.1%} < threshold {threshold:.1%}")
+            return 1
+        print(f" GATE PASSED: score {report.composite_score:.1%} >= threshold {threshold:.1%}")
+
+    print()
+    return 0 if report.total_failed == 0 else 1
+
+
 def cmd_mcp_serve(_args: argparse.Namespace) -> int:
     from app.config import settings as app_settings
 
@@ -293,6 +346,12 @@ def main() -> None:
 
     p_st = sub.add_parser("status", help="Show pending approvals")
     p_st.set_defaults(fn=cmd_status)
+
+    p_bench = sub.add_parser("benchmark", help="Run security benchmark against the immune scanner")
+    p_bench.add_argument("--json", action="store_true", help="Output JSON report")
+    p_bench.add_argument("--categories", default=None, help="Comma-separated category filter")
+    p_bench.add_argument("--threshold", default=None, help="Minimum score (0.0-1.0) for CI gate pass")
+    p_bench.set_defaults(fn=cmd_benchmark)
 
     p_sk = sub.add_parser("skills", help="Manage reusable skills")
     sk_sub = p_sk.add_subparsers(dest="skills_cmd", required=True)

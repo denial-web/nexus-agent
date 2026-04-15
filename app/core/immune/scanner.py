@@ -11,6 +11,7 @@ import logging
 import re
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -29,6 +30,57 @@ class ScanResult:
     score: float
     triggers: list[str] = field(default_factory=list)
     details: dict = field(default_factory=dict)
+
+
+# ── Unicode normalization ──────────────────────────────────────────
+
+_ZERO_WIDTH = re.compile(
+    "[\u200b\u200c\u200d\u2060\ufeff\u2063\u2062\u2061"
+    "\u202a\u202b\u202c\u202d\u202e"
+    "\u2066\u2067\u2068\u2069"
+    "\u00ad]"
+)
+
+_COMBINING_MARKS = re.compile(r"[\u0300-\u036f]")
+
+_CONFUSABLE_MAP: dict[int, str] = {
+    0x0430: "a",  # Cyrillic а
+    0x0435: "e",  # Cyrillic е
+    0x043E: "o",  # Cyrillic о
+    0x0440: "p",  # Cyrillic р
+    0x0441: "c",  # Cyrillic с
+    0x0443: "y",  # Cyrillic у
+    0x0445: "x",  # Cyrillic х
+    0x0456: "i",  # Cyrillic і
+    0x0410: "A",  # Cyrillic А
+    0x0412: "B",  # Cyrillic В
+    0x0415: "E",  # Cyrillic Е
+    0x041D: "H",  # Cyrillic Н
+    0x041E: "O",  # Cyrillic О
+    0x0420: "P",  # Cyrillic Р
+    0x0421: "C",  # Cyrillic С
+    0x0422: "T",  # Cyrillic Т
+    0x0425: "X",  # Cyrillic Х
+    0x2170: "i",  # Roman numeral ⅰ
+    0x2171: "ii",
+    0x217A: "xi",
+}
+
+
+def _normalize_unicode(text: str, *, replace_zw_with_space: bool = False) -> str:
+    """Normalize Unicode tricks that attempt to bypass regex-based detection."""
+    text = _ZERO_WIDTH.sub(" " if replace_zw_with_space else "", text)
+    text = unicodedata.normalize("NFD", text)
+    text = _COMBINING_MARKS.sub("", text)
+    text = unicodedata.normalize("NFKC", text)
+    chars: list[str] = []
+    for ch in text:
+        replacement = _CONFUSABLE_MAP.get(ord(ch))
+        if replacement:
+            chars.append(replacement)
+        else:
+            chars.append(ch)
+    return "".join(chars)
 
 
 # ── Multi-language injection patterns ──────────────────────────────
@@ -83,8 +135,9 @@ ESCALATION_PHRASES = [
 ]
 
 OUTPUT_LEAK_PATTERNS = [
-    r"(sk|pk)[-_][a-zA-Z0-9]{20,}",
-    r"(api[_-]?key|secret|password|token)\s*[:=]\s*\S+",
+    r"(sk|pk)[-_][a-zA-Z0-9_]{20,}",
+    r"(api[_-]?key|secret|password|token)\s*[:=]\s*[\"'][^\s\"']{6,}",
+    r"(api[_-]?key|secret|password|token)\s*[:=]\s*(?=[^\s\"']*\d)[a-zA-Z0-9/+=_-]{8,}",
     r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----",
 ]
 
@@ -248,6 +301,16 @@ def harden_prompt(prompt: str) -> tuple[str, list[str]]:
         for match in pattern.finditer(result):
             removed.append(match.group().strip())
         result = pattern.sub("", result)
+
+    if not removed:
+        normalized = _normalize_unicode(prompt)
+        for pattern in _HARDENING_REMOVALS:
+            for match in pattern.finditer(normalized):
+                removed.append(match.group().strip())
+            normalized = pattern.sub("", normalized)
+        if removed:
+            result = normalized
+
     result = re.sub(r"\s{2,}", " ", result).strip()
     return result, removed
 
@@ -275,17 +338,28 @@ def scan_input(
             },
         )
 
+    norm_strip = _normalize_unicode(prompt)
+    norm_space = _normalize_unicode(prompt, replace_zw_with_space=True)
+
     sig_match = _memory_bank.match(prompt)
+    if not sig_match:
+        sig_match = _memory_bank.match(norm_strip)
+    if not sig_match:
+        sig_match = _memory_bank.match(norm_space)
     if sig_match:
         triggers.append("memory_bank:known_attack_signature")
         score += 0.5
 
     for pattern in _compiled_injection:
-        if pattern.search(prompt):
+        if (
+            pattern.search(prompt)
+            or pattern.search(norm_strip)
+            or pattern.search(norm_space)
+        ):
             triggers.append(f"injection:{pattern.pattern[:40]}")
             score += 0.4
 
-    prompt_lower = prompt.lower()
+    prompt_lower = norm_space.lower()
     for phrase in ESCALATION_PHRASES:
         if phrase in prompt_lower:
             triggers.append(f"escalation:{phrase}")

@@ -456,3 +456,24 @@ def compare_models(req: CompareRequest, db: Session = Depends(get_db)) -> dict:
         "candidate_count": len(candidates),
         "latency_ms": latency_ms,
     }
+
+
+# ── Security Benchmark ──────────────────────────────────────────────
+
+
+class BenchmarkRequest(BaseModel):
+    categories: list[str] | None = None
+    threshold: float | None = None
+
+
+@router.post("/benchmark")
+def run_security_benchmark(body: BenchmarkRequest) -> dict:
+    from app.core.immune.benchmark import run_benchmark
+
+    report = run_benchmark(categories=body.categories)
+    result = report.to_dict()
+    if body.threshold is not None and report.composite_score < body.threshold:
+        result["gate"] = "failed"
+    elif body.threshold is not None:
+        result["gate"] = "passed"
+    return result

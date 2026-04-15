@@ -16,7 +16,7 @@ Nexus Agent is a **Zero-Trust & Self-Evolving AI Agent System**. It wraps LLM ca
 - **Crypto**: `cryptography` (for ECDSA capability tokens)
 - **Observability**: Prometheus metrics (`prometheus-client`), structured logging
 - **Database drivers**: `psycopg2-binary` (PostgreSQL)
-- **Testing**: pytest + httpx TestClient (dual SQLite + Postgres CI)
+- **Testing**: pytest + httpx TestClient (dual SQLite + Postgres CI), 93-test adversarial red-team suite
 
 ## Project Structure
 
@@ -30,7 +30,7 @@ app/
 │   └── agent_loop.py       # run_agent(): tools, reflection, step traces, task reward
 ├── channels/
 │   └── telegram_bot.py     # Optional Telegram long-poll when TELEGRAM_BOT_TOKEN set
-├── cli.py                  # nexus CLI (chat, run, status, approve, feedback)
+├── cli.py                  # nexus CLI (chat, run, status, approve, feedback, benchmark)
 ├── api/
 │   ├── agent.py            # /run, /stream, /compare, /agent/run, /agent/resume, /agent/feedback
 │   ├── traces.py           # GET /api/traces, GET /api/traces/{id}/replay
@@ -93,7 +93,7 @@ app/
 - **Pydantic v2** — use `model_config = ConfigDict(...)`, not `class Config`
 - **SQLAlchemy 2.0** style — `Column()`, `declarative_base()`
 - **Logging** — `logger = logging.getLogger(__name__)`, never `print()`
-- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 462 tests across 25 test files. CI runs against both SQLite and Postgres 16.
+- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 577 tests across 28 test files. CI runs against both SQLite and Postgres 16.
 - **Alembic** — `render_as_batch=True` for SQLite, dialect-aware migrations (e.g., `USING` casts for Postgres)
 
 ## Pipeline Flow (app/agent/pipeline.py)
@@ -126,7 +126,7 @@ response. Events:
 
 ## Current State — All Phases Complete
 
-**462 passing tests** across 25 test files.
+**577 passing tests** across 28 test files.
 
 **Completed phases:**
 - **Phase 1**: Foundation — pipeline, models, immune scanner, arbiter, governance, tests
@@ -194,6 +194,10 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 - **Production startup checks**: Both `NEXUS_API_KEY` and `SESSION_SECRET` must be set in non-development environments — the app refuses to start without them. Generate with: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 - **Prometheus metrics**: Available at `GET /metrics` when `EXPOSE_METRICS=true` (opt-in, default `false`) and `prometheus_client` is installed. Protected by API key auth when `NEXUS_API_KEY` is set. Tracks pipeline latency, run counts by status, LLM call/error rates, critic scores, and labeling queue depth.
 - **API key comparison**: Uses timing-safe SHA-256 digest comparison (`_safe_key_compare`) to prevent length-based timing side-channels.
+- **Unicode normalization**: Input scanner runs dual-strategy Unicode normalization (strip + space-replace) to catch zero-width character insertion, fullwidth character substitution, Cyrillic/Latin homoglyph confusion, combining diacritic obfuscation, and invisible separator attacks. Confusable mapping covers 20+ Cyrillic→Latin and symbol homoglyphs.
+- **Output scan precision**: Leak patterns require digit-containing values for unquoted secrets and quoted-string matching for quoted secrets, preventing false positives on code patterns like `apiKey = getApiKey()` while catching real leaks like `api_key=sk-abc123...`.
+- **Red-team test suite**: 93 adversarial tests (`test_redteam.py`) covering 9 attack categories: structural injection, encoding/obfuscation evasion, multi-language advanced, indirect/contextual, compound/chained, output scan evasion, hardener edge cases, memory bank adversarial, and false-positive resilience across all 11 scanner languages.
+- **Security benchmark**: `nexus benchmark` CLI command and `POST /api/agent/benchmark` endpoint. Runs 65 categorized attack payloads against the immune scanner, produces per-category detection rates and a composite security score. Supports `--json` for CI integration and `--threshold` for deployment gating (e.g. `nexus benchmark --threshold 0.95`).
 - **CI pipeline**: Three parallel GitHub Actions jobs — `lint` (ruff, mypy, pip-audit), `test-sqlite`, `test-postgres` (service container with Postgres 16). The Postgres job catches dialect mismatches (e.g., implicit type casts) that SQLite silently accepts.
 - **Concurrency safety**: Rate limiter uses `asyncio.Lock` for safe concurrent request counting. LLM client singletons use `threading.Lock` (double-checked locking) to prevent duplicate initialization under concurrent `generate_multi` threads. ECDSA key init likewise uses `threading.Lock`.
 - **Capability token lifecycle**: Consumed tokens are immediately deleted from the in-memory store. When the store reaches 10 000 entries, expired and used tokens are evicted before new issuance.

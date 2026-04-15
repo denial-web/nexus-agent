@@ -49,7 +49,7 @@ def import_skill_endpoint(
     if url_clean:
         sid = import_skill_from_url(url_clean, db, force=force)
     else:
-        raw = file.file.read()  # type: ignore[union-attr]
+        raw = file.file.read()
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:

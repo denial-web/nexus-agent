@@ -163,8 +163,8 @@ class GovernedMcpTool(Tool):
         arguments: dict[str, Any],
         context: Context | None = None,
     ) -> ToolResult:
-        backend: McpBackend = self._backend  # type: ignore[assignment]
-        remote: str = self._remote_tool_name  # type: ignore[assignment]
+        backend: McpBackend = self._backend
+        remote: str = self._remote_tool_name
         action = mcp_action_id(backend.name, remote)
 
         if settings.LOCAL_ONLY:

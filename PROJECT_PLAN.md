@@ -308,6 +308,7 @@ Failure traces awaiting human review for the training flywheel.
 - `POST /api/agent/agent/run` — Agentic loop (tools + reflection + reward scoring). Body: `{"prompt": "...", "session_id": "optional", "model_id": "optional", "max_steps": 25}`
 - `POST /api/agent/agent/resume` — Resume agent after human approval. Body: `{"trace_id": "..."}`
 - `POST /api/agent/agent/feedback` — Attach good/bad feedback to a trace. Body: `{"trace_id": "...", "feedback": "good|bad"}`
+- `POST /api/agent/benchmark` — Run security benchmark against the immune scanner. Body: `{"categories": ["encoding_evasion"], "threshold": 0.95}`. Returns per-category detection rates and composite score with optional gate pass/fail.
 
 ### Skills (`app/api/skills.py`)
 - `GET /api/skills` — List skills with reward stats. Query: `?enabled_only=true`
@@ -361,7 +362,7 @@ Failure traces awaiting human review for the training flywheel.
 
 ---
 
-## Testing — 462+ tests across 25 files
+## Testing — 577+ tests across 28 files
 
 - All tests in `tests/` directory
 - Fixtures in `tests/conftest.py` (test DB, session, TestClient)
@@ -398,6 +399,8 @@ Failure traces awaiting human review for the training flywheel.
 | `test_mcp_proxy.py` | MCP proxy governance, namespaced policies, LOCAL_ONLY, backend CRUD, tool forwarding |
 | `test_clawhub_import.py` | SKILL.md parsing, step conversion, instruction steps, immune blocking, dedup, raw_source |
 | `test_mcp_cli.py` | CLI subcommands: nexus mcp serve/backends/add, nexus skills import |
+| `test_redteam.py` | Adversarial red-team: encoding evasion, structural injection, multi-language advanced, indirect attacks, compound/chained, output scan, hardener edge cases, memory bank, false-positive resilience |
+| `test_benchmark.py` | Security benchmark: runner, per-category scoring, API endpoint, CLI commands, attack registry integrity, CI gating |
 
 ---
 
@@ -427,6 +430,12 @@ alembic upgrade head
 
 # Check existing tables
 alembic current
+
+# Security benchmark
+nexus benchmark                           # table output
+nexus benchmark --json                    # JSON for CI
+nexus benchmark --threshold 0.95          # fail if score < 95%
+nexus benchmark --categories encoding_evasion,multilingual
 
 # Docker (SQLite, default)
 docker compose up --build
