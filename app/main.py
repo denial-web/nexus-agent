@@ -29,6 +29,7 @@ from app.api.mcp import router as mcp_router
 from app.api.skills import router as skills_router
 from app.api.traces import router as traces_router
 from app.api.training import router as training_router
+from app.api.webhooks import router as webhooks_router
 from app.config import settings
 from app.db import Base, SessionLocal, engine
 from app.logging_config import configure_logging, request_id_var
@@ -489,6 +490,7 @@ app.include_router(governance_router)
 app.include_router(skills_router)
 app.include_router(mcp_router)
 app.include_router(training_router)
+app.include_router(webhooks_router)
 app.include_router(dashboard_router)
 
 if settings.MCP_ENABLED and not settings.LOCAL_ONLY:

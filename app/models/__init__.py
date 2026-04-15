@@ -7,6 +7,7 @@ from app.models.skill import Skill
 from app.models.step_trace import StepTrace
 from app.models.trace import Trace
 from app.models.training_meta import CalibrationSnapshot, DoctrineOutbox
+from app.models.webhook import Webhook
 
 __all__ = [
     "Trace",
@@ -20,4 +21,5 @@ __all__ = [
     "Policy",
     "DoctrineOutbox",
     "CalibrationSnapshot",
+    "Webhook",
 ]

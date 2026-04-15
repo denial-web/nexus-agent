@@ -146,6 +146,10 @@ def run(
             )
         _persist_trace(result, prompt, db_session)
         _record_run(result)
+        _fire_webhook("input_blocked", {
+            "trace_id": trace_id, "session_id": session_id,
+            "score": input_scan.score, "triggers": input_scan.triggers,
+        })
         return result
 
     if input_scan.verdict == Verdict.FLAG:
@@ -255,6 +259,11 @@ def run(
 
         _persist_trace(result, prompt, db_session)
         _record_run(result)
+        _fire_webhook("critic_halt", {
+            "trace_id": trace_id, "session_id": session_id,
+            "halted_by": critic_result.halted_by,
+            "scores": serialized_scores,
+        })
         return result
 
     # ── Step 5: Governance check ────────────────────────
@@ -314,6 +323,12 @@ def run(
             result.governance["approval_request_id"] = approval.id
         _persist_trace(result, prompt, db_session)
         _record_run(result)
+        _fire_webhook("approval_needed", {
+            "trace_id": trace_id, "session_id": session_id,
+            "risk_level": gov_decision.risk_level,
+            "policy": gov_decision.policy_name,
+            "approval_request_id": result.approval_request_id,
+        })
         return result
 
     # ── Step 6: Output scan ─────────────────────────────
@@ -340,6 +355,10 @@ def run(
             )
         _persist_trace(result, prompt, db_session)
         _record_run(result)
+        _fire_webhook("output_blocked", {
+            "trace_id": trace_id, "session_id": session_id,
+            "triggers": output_scan.triggers,
+        })
         return result
 
     # ── Step 7: Success ─────────────────────────────────
@@ -778,3 +797,13 @@ def _record_run(result: PipelineResult) -> None:
 
 def _elapsed(start: float) -> float:
     return round((time.time() - start) * 1000, 1)
+
+
+def _fire_webhook(event: str, data: dict) -> None:
+    """Non-blocking webhook dispatch; failures are logged, never raised."""
+    try:
+        from app.services.webhooks import fire_event
+
+        fire_event(event, data)
+    except Exception:
+        logger.debug("Webhook fire failed for event %s", event, exc_info=True)

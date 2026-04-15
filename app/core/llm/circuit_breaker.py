@@ -20,6 +20,7 @@ import threading
 import time
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,12 @@ class CircuitBreakerConfig:
 class CircuitBreaker:
     """Per-provider circuit breaker with thread-safe state transitions."""
 
-    def __init__(self, name: str, config: CircuitBreakerConfig | None = None):
+    def __init__(
+        self,
+        name: str,
+        config: CircuitBreakerConfig | None = None,
+        on_open: Any | None = None,
+    ):
         self.name = name
         self._config = config or CircuitBreakerConfig()
         self._state = CircuitState.CLOSED
@@ -49,6 +55,7 @@ class CircuitBreaker:
         self._last_failure_time: float = 0.0
         self._half_open_successes: int = 0
         self._lock = threading.Lock()
+        self._on_open = on_open
 
     @property
     def state(self) -> CircuitState:
@@ -84,28 +91,35 @@ class CircuitBreaker:
 
     def record_failure(self) -> None:
         now = time.monotonic()
+        opened = False
         with self._lock:
             if self._state == CircuitState.HALF_OPEN:
                 self._state = CircuitState.OPEN
                 self._last_failure_time = now
+                opened = True
                 logger.warning("Circuit breaker %s: HALF_OPEN → OPEN (probe failed)", self.name)
-                return
+            else:
+                cutoff = now - self._config.rolling_window_seconds
+                self._failure_timestamps = [
+                    t for t in self._failure_timestamps if t > cutoff
+                ]
+                self._failure_timestamps.append(now)
 
-            cutoff = now - self._config.rolling_window_seconds
-            self._failure_timestamps = [
-                t for t in self._failure_timestamps if t > cutoff
-            ]
-            self._failure_timestamps.append(now)
-
-            if len(self._failure_timestamps) >= self._config.failure_threshold:
-                self._state = CircuitState.OPEN
-                self._last_failure_time = now
-                logger.warning(
-                    "Circuit breaker %s: CLOSED → OPEN (%d failures in %.0fs window)",
-                    self.name,
-                    len(self._failure_timestamps),
-                    self._config.rolling_window_seconds,
-                )
+                if len(self._failure_timestamps) >= self._config.failure_threshold:
+                    self._state = CircuitState.OPEN
+                    self._last_failure_time = now
+                    opened = True
+                    logger.warning(
+                        "Circuit breaker %s: CLOSED → OPEN (%d failures in %.0fs window)",
+                        self.name,
+                        len(self._failure_timestamps),
+                        self._config.rolling_window_seconds,
+                    )
+        if opened and self._on_open:
+            try:
+                self._on_open(self.name)
+            except Exception:
+                logger.debug("Circuit breaker on_open callback failed for %s", self.name)
 
     def reset(self) -> None:
         with self._lock:
@@ -141,8 +155,13 @@ class CircuitOpenError(Exception):
 class CircuitBreakerRegistry:
     """Manages per-provider circuit breakers."""
 
-    def __init__(self, default_config: CircuitBreakerConfig | None = None):
+    def __init__(
+        self,
+        default_config: CircuitBreakerConfig | None = None,
+        on_open: Any | None = None,
+    ):
         self._default_config = default_config or CircuitBreakerConfig()
+        self._on_open = on_open
         self._breakers: dict[str, CircuitBreaker] = {}
         self._lock = threading.Lock()
 
@@ -152,7 +171,7 @@ class CircuitBreakerRegistry:
         with self._lock:
             if provider not in self._breakers:
                 self._breakers[provider] = CircuitBreaker(
-                    provider, self._default_config,
+                    provider, self._default_config, on_open=self._on_open,
                 )
             return self._breakers[provider]
 
@@ -170,6 +189,16 @@ _registry: CircuitBreakerRegistry | None = None
 _registry_lock = threading.Lock()
 
 
+def _on_circuit_open(provider: str) -> None:
+    """Webhook callback when a circuit transitions to OPEN."""
+    try:
+        from app.services.webhooks import fire_event
+
+        fire_event("circuit_open", {"provider": provider})
+    except Exception:
+        logger.debug("Webhook fire failed for circuit_open event", exc_info=True)
+
+
 def get_registry() -> CircuitBreakerRegistry:
     global _registry
     if _registry is not None:
@@ -184,6 +213,7 @@ def get_registry() -> CircuitBreakerRegistry:
                     recovery_timeout_seconds=settings.CB_RECOVERY_TIMEOUT,
                     rolling_window_seconds=settings.CB_WINDOW_SECONDS,
                 ),
+                on_open=_on_circuit_open,
             )
         return _registry
 

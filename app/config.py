@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     OLLAMA_DEFAULT_MODEL: str = "llama3.2"
     OLLAMA_LIST_IN_PROVIDERS: bool = False  # when True, include in get_available_providers()
 
+    # Webhooks
+    WEBHOOKS_ENABLED: bool = False
+    WEBHOOK_WORKERS: int = 2
+
     # MCP governance proxy (Phase 11)
     MCP_ENABLED: bool = False
     MCP_BACKENDS_FILE: str = "mcp_backends.json"

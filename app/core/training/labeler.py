@@ -202,6 +202,18 @@ def export_for_training(
         db_session.commit()
 
     logger.info("Exported %d items for training (batch=%s)", len(training_data), batch_id)
+
+    if training_data:
+        try:
+            from app.services.webhooks import fire_event
+
+            fire_event("export_complete", {
+                "batch_id": batch_id,
+                "exported_count": len(training_data),
+            })
+        except Exception:
+            logger.debug("Webhook fire failed for export_complete", exc_info=True)
+
     return training_data
 
 

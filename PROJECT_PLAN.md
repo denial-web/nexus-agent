@@ -313,6 +313,16 @@ Failure traces awaiting human review for the training flywheel.
 - `DELETE /api/agent/cache` — Clear the LLM response cache. Returns `{"cleared": N}`.
 - `GET /api/agent/circuit-breakers` — Per-provider circuit breaker status (state, recent failures, thresholds).
 
+### Webhooks (`app/api/webhooks.py`)
+
+- `POST /api/webhooks` — Create webhook. Body: `{"url": "...", "events": ["critic_halt", "input_blocked"], "secret": "...", "description": "..."}`. Events: `approval_needed`, `critic_halt`, `circuit_open`, `input_blocked`, `output_blocked`, `export_complete`, `*` (all).
+- `GET /api/webhooks` — List all webhooks.
+- `GET /api/webhooks/{id}` — Get webhook details.
+- `PATCH /api/webhooks/{id}` — Update webhook (url, events, secret, enabled). Re-enabling resets failure count.
+- `DELETE /api/webhooks/{id}` — Delete webhook.
+- `POST /api/webhooks/{id}/test` — Send a test event to the webhook.
+- `GET /api/webhooks/events/list` — List valid event types.
+
 ### Skills (`app/api/skills.py`)
 - `GET /api/skills` — List skills with reward stats. Query: `?enabled_only=true`
 - `GET /api/skills/{id}` — Full skill detail (steps, reward stats, hash, source episode)
@@ -365,7 +375,7 @@ Failure traces awaiting human review for the training flywheel.
 
 ---
 
-## Testing — 626+ tests across 30 files
+## Testing — 649+ tests across 31 files
 
 - All tests in `tests/` directory
 - Fixtures in `tests/conftest.py` (test DB, session, TestClient)
@@ -406,6 +416,7 @@ Failure traces awaiting human review for the training flywheel.
 | `test_benchmark.py` | Security benchmark: runner, per-category scoring, API endpoint, CLI commands, attack registry integrity, CI gating |
 | `test_circuit_breaker.py` | Circuit breaker state machine, rolling window, half-open recovery, provider fallback chain, concurrent access, stream fallback |
 | `test_llm_cache.py` | LLM response cache: hit/miss, TTL expiry, LRU eviction, invalidation, stats, concurrency, provider integration, security invariants (governance not bypassed), API endpoints |
+| `test_webhooks.py` | Webhook system: HMAC signing/verification, delivery with retries, event filtering, wildcard subscription, disabled skip, API CRUD, pipeline integration (input_blocked fires webhook) |
 
 ---
 
