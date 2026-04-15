@@ -153,6 +153,20 @@ class _NoopSpan:
         pass
 
 
+def get_current_trace_context() -> dict[str, str]:
+    """Return current trace_id and span_id as hex strings, or "-" if none."""
+    if not _HAS_OTEL:
+        return {"trace_id": "-", "span_id": "-"}
+    current = trace.get_current_span()
+    ctx = current.get_span_context()
+    if ctx and ctx.trace_id != 0:
+        return {
+            "trace_id": format(ctx.trace_id, "032x"),
+            "span_id": format(ctx.span_id, "016x"),
+        }
+    return {"trace_id": "-", "span_id": "-"}
+
+
 def is_available() -> bool:
     return _HAS_OTEL
 

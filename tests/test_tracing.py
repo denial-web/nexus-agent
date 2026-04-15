@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import threading
 from collections.abc import Sequence
 from unittest.mock import patch
@@ -307,6 +309,127 @@ class TestPipelineSpanIntegration:
         root = root_spans[0]
         attrs = dict(root.attributes or {})
         assert attrs.get("pipeline.status") in ("blocked", "halted")
+
+
+class TestTraceContext:
+
+    def test_get_current_trace_context_no_span(self):
+        from app.tracing import get_current_trace_context
+
+        ctx = get_current_trace_context()
+        assert ctx["trace_id"] == "-"
+        assert ctx["span_id"] == "-"
+
+    def test_get_current_trace_context_inside_span(self):
+        _reset_otel_global()
+        exporter, provider = _make_test_provider()
+
+        with patch("app.config.settings") as mock_settings:
+            mock_settings.OTEL_ENABLED = True
+            tracer = get_tracer("test.ctx")
+
+        from app.tracing import get_current_trace_context
+
+        with span(tracer, "ctx_test"):
+            ctx = get_current_trace_context()
+            assert ctx["trace_id"] != "-"
+            assert ctx["span_id"] != "-"
+            assert len(ctx["trace_id"]) == 32
+            assert len(ctx["span_id"]) == 16
+
+        shutdown_tracing()
+        _reset_otel_global()
+
+
+class TestLogTraceCorrelation:
+
+    def test_json_formatter_includes_trace_fields(self):
+        from app.logging_config import JSONFormatter
+
+        fmt = JSONFormatter()
+        record = logging.LogRecord(
+            name="test", level=logging.INFO, pathname="", lineno=0,
+            msg="hello", args=(), exc_info=None,
+        )
+        output = fmt.format(record)
+        parsed = json.loads(output)
+        assert "trace_id" in parsed
+        assert "span_id" in parsed
+
+    def test_text_formatter_sets_trace_attrs(self):
+        from app.logging_config import TextFormatter
+
+        fmt = TextFormatter(
+            fmt="%(message)s trace=%(trace_id)s span=%(span_id)s",
+        )
+        record = logging.LogRecord(
+            name="test", level=logging.INFO, pathname="", lineno=0,
+            msg="hello", args=(), exc_info=None,
+        )
+        output = fmt.format(record)
+        assert "trace=" in output
+        assert "span=" in output
+
+    def test_json_formatter_with_active_span(self):
+        _reset_otel_global()
+        exporter, provider = _make_test_provider()
+
+        with patch("app.config.settings") as mock_settings:
+            mock_settings.OTEL_ENABLED = True
+            tracer = get_tracer("test.log")
+
+        from app.logging_config import JSONFormatter
+
+        fmt = JSONFormatter()
+
+        with span(tracer, "log_test"):
+            record = logging.LogRecord(
+                name="test", level=logging.INFO, pathname="", lineno=0,
+                msg="inside span", args=(), exc_info=None,
+            )
+            output = fmt.format(record)
+
+        parsed = json.loads(output)
+        assert parsed["trace_id"] != "-"
+        assert parsed["span_id"] != "-"
+
+        shutdown_tracing()
+        _reset_otel_global()
+
+
+class TestHealthEndpoints:
+    def test_health_basic(self, client):
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_readiness_full_shape(self, client):
+        resp = client.get("/health/ready")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ready"
+        assert "uptime_seconds" in data
+        checks = data["checks"]
+        assert checks["database"] == "connected"
+        assert isinstance(checks["llm_providers"], int)
+        assert isinstance(checks["llm_provider_names"], list)
+        assert "circuit_breakers" in checks
+        assert "total" in checks["circuit_breakers"]
+        assert "open" in checks["circuit_breakers"]
+        assert "llm_cache" in checks
+        assert "enabled" in checks["llm_cache"]
+        assert "tracing" in checks
+        assert "enabled" in checks["tracing"]
+        assert "webhooks_enabled" in checks
+        assert "mcp_enabled" in checks
+
+    def test_readiness_db_down_returns_503(self, client):
+        with patch("app.main.SessionLocal") as mock_session_cls:
+            mock_session_cls.side_effect = Exception("db gone")
+            resp = client.get("/health/ready")
+        assert resp.status_code == 503
+        assert resp.json()["status"] == "degraded"
+        assert resp.json()["checks"]["database"] == "unreachable"
 
 
 class TestTracingAPI:

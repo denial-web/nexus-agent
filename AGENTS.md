@@ -96,7 +96,7 @@ app/
 - **Pydantic v2** — use `model_config = ConfigDict(...)`, not `class Config`
 - **SQLAlchemy 2.0** style — `Column()`, `declarative_base()`
 - **Logging** — `logger = logging.getLogger(__name__)`, never `print()`
-- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 667 tests across 32 test files. CI runs against both SQLite and Postgres 16.
+- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 675 tests across 32 test files. CI runs against both SQLite and Postgres 16.
 - **Alembic** — `render_as_batch=True` for SQLite, dialect-aware migrations (e.g., `USING` casts for Postgres)
 
 ## Pipeline Flow (app/agent/pipeline.py)
@@ -129,7 +129,7 @@ response. Events:
 
 ## Current State — All Phases Complete
 
-**667 passing tests** across 32 test files.
+**675 passing tests** across 32 test files.
 
 **Completed phases:**
 - **Phase 1**: Foundation — pipeline, models, immune scanner, arbiter, governance, tests
@@ -180,7 +180,7 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 - **A-S-FLC resilience**: `build_paths_from_llm_output` gracefully skips non-dict events and unconvertible values. The analyzer wraps path building in `try/except` and falls back to default paths on any structural error.
 - **Dashboard vote error surfacing**: Dashboard vote endpoint returns an error page with the failure message (and back-link) instead of silently redirecting on error.
 - **Secure-by-default metrics**: `EXPOSE_METRICS` defaults to `False`; operators must opt in via `.env`.
-- **Structured logging**: JSON log output in production (machine-parseable for ELK/CloudWatch); human-readable text in development. Every log line includes a `request_id` for correlation.
+- **Structured logging**: JSON log output in production (machine-parseable for ELK/CloudWatch); human-readable text in development. Every log line includes `request_id`, `trace_id`, and `span_id` for full log-trace correlation. When OTel tracing is active, logs automatically carry the current trace/span context, enabling one-click jumps from log entries to distributed traces in Jaeger/Tempo/Datadog.
 - **Request correlation**: `RequestIdMiddleware` assigns a unique ID to every request (or echoes the incoming `X-Request-ID` header). The ID is stored in a `contextvars.ContextVar` accessible from any logger, and returned in the `X-Request-ID` response header.
 - **Skill recall**: Before the agent's first LLM call, `_retrieve_skills` keyword-matches enabled skills by description and injects their step sequences into the system prompt so the agent can follow proven workflows. Skills are ranked by `avg_reward`. A full REST API (`/api/skills`) provides list, get, execute, enable/disable, and delete operations — all Covernor-gated on execution.
 - **Data retention**: Configurable per-table purge via `RETENTION_*_DAYS` env vars (0 = disabled). Runs every 12 scheduler cycles (~1 hour at default 5min interval). Only purges terminal-state rows (exported labeling items, resolved approvals) — never deletes pending work.
@@ -195,6 +195,7 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 - **Rate limiting**: Applied to all expensive POST endpoints (`/api/agent/run`, `/api/agent/stream`, `/api/agent/compare`, `/api/training/lora/compare`, `/api/training/export`, `/dashboard/login`, etc.). Configurable via `RATE_LIMIT_RPM`. In-process memory only — use Redis for multi-worker deployments.
 - **Dashboard auth**: When `NEXUS_API_KEY` is set, `/dashboard` requires login via POST form. Session-based after first login. Query-string API key authentication is not supported (prevents credential leakage in logs/Referer headers). Unauthenticated in development mode.
 - **Production startup checks**: Both `NEXUS_API_KEY` and `SESSION_SECRET` must be set in non-development environments — the app refuses to start without them. Generate with: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+- **Health checks**: `GET /health` (liveness, always 200), `GET /health/ready` (readiness, 200 or 503). Readiness probes: database connectivity, LLM provider count, circuit breaker states (open circuits listed), LLM cache status (enabled, size, hit rate), OTel tracing status, webhooks/MCP enabled flags, uptime. Use for Kubernetes liveness/readiness probes.
 - **Prometheus metrics**: Available at `GET /metrics` when `EXPOSE_METRICS=true` (opt-in, default `false`) and `prometheus_client` is installed. Protected by API key auth when `NEXUS_API_KEY` is set. Tracks pipeline latency, run counts by status, LLM call/error rates, critic scores, and labeling queue depth.
 - **API key comparison**: Uses timing-safe SHA-256 digest comparison (`_safe_key_compare`) to prevent length-based timing side-channels.
 - **Unicode normalization**: Input scanner runs dual-strategy Unicode normalization (strip + space-replace) to catch zero-width character insertion, fullwidth character substitution, Cyrillic/Latin homoglyph confusion, combining diacritic obfuscation, and invisible separator attacks. Confusable mapping covers 20+ Cyrillic→Latin and symbol homoglyphs.

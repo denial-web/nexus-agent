@@ -192,8 +192,13 @@ class TestDashboardE2E:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ready"
-        assert data["database"] == "connected"
         assert "uptime_seconds" in data
+        checks = data["checks"]
+        assert checks["database"] == "connected"
+        assert "llm_providers" in checks
+        assert "circuit_breakers" in checks
+        assert "tracing" in checks
+        assert "llm_cache" in checks
 
     def test_readiness_returns_503_on_db_failure(self, client):
         with patch("app.main.SessionLocal") as mock_session_cls:
@@ -201,6 +206,7 @@ class TestDashboardE2E:
             resp = client.get("/health/ready")
         assert resp.status_code == 503
         assert resp.json()["status"] == "degraded"
+        assert resp.json()["checks"]["database"] == "unreachable"
 
     def test_calibration_page_loads(self, client):
         resp = client.get("/dashboard/calibration")

@@ -314,6 +314,11 @@ Failure traces awaiting human review for the training flywheel.
 - `GET /api/agent/circuit-breakers` — Per-provider circuit breaker status (state, recent failures, thresholds).
 - `GET /api/agent/tracing` — OpenTelemetry tracing status (enabled, available, service name, exporter endpoint, sample rate).
 
+### Health (`app/main.py`)
+
+- `GET /health` — Liveness probe. Always returns 200 with `{"status": "ok"}`.
+- `GET /health/ready` — Readiness probe. Returns 200 (ready) or 503 (degraded). Checks: database connectivity, LLM provider count, circuit breaker states, LLM cache status, OTel tracing, webhooks/MCP enabled, uptime.
+
 ### Webhooks (`app/api/webhooks.py`)
 
 - `POST /api/webhooks` — Create webhook. Body: `{"url": "...", "events": ["critic_halt", "input_blocked"], "secret": "...", "description": "..."}`. Events: `approval_needed`, `critic_halt`, `circuit_open`, `input_blocked`, `output_blocked`, `export_complete`, `*` (all).
@@ -376,7 +381,7 @@ Failure traces awaiting human review for the training flywheel.
 
 ---
 
-## Testing — 667+ tests across 32 files
+## Testing — 675+ tests across 32 files
 
 - All tests in `tests/` directory
 - Fixtures in `tests/conftest.py` (test DB, session, TestClient)
@@ -418,7 +423,7 @@ Failure traces awaiting human review for the training flywheel.
 | `test_circuit_breaker.py` | Circuit breaker state machine, rolling window, half-open recovery, provider fallback chain, concurrent access, stream fallback |
 | `test_llm_cache.py` | LLM response cache: hit/miss, TTL expiry, LRU eviction, invalidation, stats, concurrency, provider integration, security invariants (governance not bypassed), API endpoints |
 | `test_webhooks.py` | Webhook system: HMAC signing/verification, delivery with retries, event filtering, wildcard subscription, disabled skip, API CRUD, pipeline integration (input_blocked fires webhook) |
-| `test_tracing.py` | OpenTelemetry tracing: no-op fallback, init/shutdown lifecycle, real span creation, exception recording, nested span context propagation, pipeline span integration, API endpoint |
+| `test_tracing.py` | OpenTelemetry tracing: no-op fallback, init/shutdown lifecycle, real span creation, exception recording, nested span context propagation, pipeline span integration, log-trace correlation (JSON + text formatters, active span context), health check probes (full shape, DB down), API endpoint |
 
 ---
 

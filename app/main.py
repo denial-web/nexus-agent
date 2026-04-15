@@ -465,6 +465,9 @@ def health_check() -> dict:
 
 @app.get("/health/ready")
 def readiness_check() -> Response:
+    checks: dict = {}
+    overall_ok = True
+
     db_ok = False
     try:
         db = SessionLocal()
@@ -475,15 +478,63 @@ def readiness_check() -> Response:
             db.close()
     except Exception:
         logger.warning("Readiness: database unreachable", exc_info=True)
+    checks["database"] = "connected" if db_ok else "unreachable"
+    if not db_ok:
+        overall_ok = False
+
+    try:
+        from app.core.llm.provider import get_available_providers
+
+        providers = get_available_providers()
+        checks["llm_providers"] = len(providers)
+        checks["llm_provider_names"] = [p["provider"] for p in providers]
+    except Exception:
+        checks["llm_providers"] = 0
+        checks["llm_provider_names"] = []
+
+    try:
+        from app.core.llm.circuit_breaker import get_registry
+
+        cb_status = get_registry().get_all_status()
+        open_circuits = [name for name, info in cb_status.items() if info.get("state") == "open"]
+        checks["circuit_breakers"] = {
+            "total": len(cb_status),
+            "open": open_circuits,
+        }
+    except Exception:
+        checks["circuit_breakers"] = {"total": 0, "open": []}
+
+    try:
+        from app.core.llm.cache import get_cache
+
+        cache = get_cache()
+        stats = cache.stats()
+        checks["llm_cache"] = {
+            "enabled": stats.get("enabled", False),
+            "size": stats.get("size", 0),
+            "hit_rate": stats.get("hit_rate", 0.0),
+        }
+    except Exception:
+        checks["llm_cache"] = {"enabled": False}
+
+    try:
+        from app.tracing import is_available, is_enabled
+
+        checks["tracing"] = {"enabled": is_enabled(), "available": is_available()}
+    except Exception:
+        checks["tracing"] = {"enabled": False, "available": False}
+
+    checks["webhooks_enabled"] = settings.WEBHOOKS_ENABLED
+    checks["mcp_enabled"] = settings.MCP_ENABLED
 
     uptime = round(time.time() - _start_time, 1) if _start_time else 0
+    status_label = "ready" if overall_ok else "degraded"
     body = {
-        "status": "ready" if db_ok else "degraded",
-        "database": "connected" if db_ok else "unreachable",
+        "status": status_label,
         "uptime_seconds": uptime,
+        "checks": checks,
     }
-    status_code = 200 if db_ok else 503
-    return JSONResponse(content=body, status_code=status_code)
+    return JSONResponse(content=body, status_code=200 if overall_ok else 503)
 
 
 app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
