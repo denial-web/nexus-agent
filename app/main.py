@@ -376,10 +376,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         else:
             start_scheduler()
 
+        from app.tracing import init_tracing, shutdown_tracing
+
+        init_tracing()
+
         yield
 
         if not _skip_scheduler:
             stop_scheduler()
+        shutdown_tracing()
 
 
 app = FastAPI(

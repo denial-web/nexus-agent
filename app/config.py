@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     WEBHOOKS_ENABLED: bool = False
     WEBHOOK_WORKERS: int = 2
 
+    # OpenTelemetry distributed tracing
+    OTEL_ENABLED: bool = False
+    OTEL_SERVICE_NAME: str = "nexus-agent"
+    OTEL_EXPORTER_ENDPOINT: str = "http://localhost:4318"
+    OTEL_SAMPLE_RATE: float = 1.0
+
     # MCP governance proxy (Phase 11)
     MCP_ENABLED: bool = False
     MCP_BACKENDS_FILE: str = "mcp_backends.json"

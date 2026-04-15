@@ -14,7 +14,7 @@ Nexus Agent is a **Zero-Trust & Self-Evolving AI Agent System**. It wraps LLM ca
 - **Database**: SQLite (dev), PostgreSQL (prod)
 - **AI providers**: Google Gemini (`google-genai`), OpenAI (`openai`), DeepSeek (OpenAI-compatible), Ollama (OpenAI-compatible local) — all in `requirements.txt`
 - **Crypto**: `cryptography` (for ECDSA capability tokens)
-- **Observability**: Prometheus metrics (`prometheus-client`), structured logging
+- **Observability**: Prometheus metrics (`prometheus-client`), OpenTelemetry distributed tracing (`opentelemetry-api`, `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http`), structured logging
 - **Database drivers**: `psycopg2-binary` (PostgreSQL)
 - **Testing**: pytest + httpx TestClient (dual SQLite + Postgres CI), 93-test adversarial red-team suite
 
@@ -73,6 +73,7 @@ app/
 │   ├── doctrine_bridge.py  # Doctrine Lab HTTP client
 │   ├── retention.py        # Scheduled data purge for old rows
 │   └── webhooks.py         # HMAC-signed webhook dispatcher (async, retries)
+├── tracing.py              # OpenTelemetry distributed tracing (optional, no-op when disabled)
 ├── logging_config.py       # JSON/text log formatters + request_id context var
 ├── templates/              # Jinja2 HTML templates for dashboard
 ├── static/css/style.css    # Dashboard styles
@@ -95,7 +96,7 @@ app/
 - **Pydantic v2** — use `model_config = ConfigDict(...)`, not `class Config`
 - **SQLAlchemy 2.0** style — `Column()`, `declarative_base()`
 - **Logging** — `logger = logging.getLogger(__name__)`, never `print()`
-- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 649 tests across 31 test files. CI runs against both SQLite and Postgres 16.
+- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 667 tests across 32 test files. CI runs against both SQLite and Postgres 16.
 - **Alembic** — `render_as_batch=True` for SQLite, dialect-aware migrations (e.g., `USING` casts for Postgres)
 
 ## Pipeline Flow (app/agent/pipeline.py)
@@ -128,7 +129,7 @@ response. Events:
 
 ## Current State — All Phases Complete
 
-**649 passing tests** across 31 test files.
+**667 passing tests** across 32 test files.
 
 **Completed phases:**
 - **Phase 1**: Foundation — pipeline, models, immune scanner, arbiter, governance, tests
@@ -204,6 +205,7 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 - **Circuit breaker**: Per-provider circuit breaker (`app/core/llm/circuit_breaker.py`) with CLOSED → OPEN → HALF_OPEN state machine. After `CB_FAILURE_THRESHOLD` failures within `CB_WINDOW_SECONDS`, the circuit opens and fast-fails requests. After `CB_RECOVERY_TIMEOUT` seconds, a probe request tests recovery. Automatic fallback chain: Gemini → OpenAI → DeepSeek → mock (configurable via `CB_FALLBACK_TO_MOCK`). Thread-safe with rolling failure window. Prometheus metrics: `nexus_circuit_breaker_state_changes_total`, `nexus_circuit_breaker_rejections_total`, `nexus_circuit_breaker_fallbacks_total`.
 - **LLM response cache**: Exact-match in-process LRU cache (`app/core/llm/cache.py`) keyed on `(prompt_hash, model_id, system_prompt_hash)`. Disabled by default (`LLM_CACHE_ENABLED=false`). Cached responses **still pass through** critic evaluation, governance, and output scan — only the LLM call is skipped. TTL eviction (`LLM_CACHE_TTL`, default 300s), max entries (`LLM_CACHE_MAX_ENTRIES`, default 1000). Thread-safe `OrderedDict` LRU. API: `GET /api/agent/cache/stats`, `DELETE /api/agent/cache`. Prometheus metrics: `nexus_llm_cache_hits_total`, `nexus_llm_cache_misses_total`. Use Redis for multi-worker deployments.
 - **Webhook notifications**: HMAC-SHA256-signed HTTP POST notifications for system events (`app/services/webhooks.py`). Events: `approval_needed`, `critic_halt`, `circuit_open`, `input_blocked`, `output_blocked`, `export_complete`. Async dispatch via thread pool with exponential backoff retry (3 attempts). Auto-disables webhook after 10 consecutive failures. Wildcard (`*`) subscription. CRUD API at `/api/webhooks` with test delivery endpoint. Config: `WEBHOOKS_ENABLED` (default `false`), `WEBHOOK_WORKERS` (default 2).
+- **OpenTelemetry distributed tracing**: Optional OTel instrumentation (`app/tracing.py`) wraps all 7 pipeline steps and LLM provider calls with spans. Disabled by default (`OTEL_ENABLED=false`). When enabled, exports spans via OTLP/HTTP to any compatible collector (Jaeger, Tempo, Datadog). Root span `pipeline_run` records trace_id, session_id, final status, and latency. Child spans cover immune scan, A-S-FLC analysis, LLM generation (with cache hit/miss, provider, model, token count), critic evaluation, governance check, and output scan. LLM call attempts include per-attempt spans with retry tracking. No-op tracer fallback when SDK is absent or disabled — zero runtime cost. Config: `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_ENDPOINT`, `OTEL_SAMPLE_RATE`. API: `GET /api/agent/tracing` returns status.
 - **Concurrency safety**: Rate limiter uses `asyncio.Lock` for safe concurrent request counting. LLM client singletons use `threading.Lock` (double-checked locking) to prevent duplicate initialization under concurrent `generate_multi` threads. ECDSA key init likewise uses `threading.Lock`. Circuit breakers use per-instance `threading.Lock` for state transitions.
 - **Capability token lifecycle**: Consumed tokens are immediately deleted from the in-memory store. When the store reaches 10 000 entries, expired and used tokens are evicted before new issuance.
 - **Data retention**: Set `RETENTION_TRACE_DAYS`, `RETENTION_LABELING_DAYS`, `RETENTION_APPROVAL_DAYS`, `RETENTION_CALIBRATION_DAYS` to non-zero values to enable automatic purge. The scheduler runs retention every 12 cycles (~1h). Only terminal-state rows are purged (never pending work). For very large tables, consider DB partitioning as a complement.

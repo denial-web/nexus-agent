@@ -26,6 +26,9 @@ from app.core.llm.cache import get_cache, reset_cache
 from app.core.llm.circuit_breaker import CircuitOpenError, get_registry
 from app.core.llm.models import LLMChunk, LLMResponse
 from app.metrics import CACHE_HITS, CACHE_MISSES, CB_FALLBACKS, CB_REJECTIONS, LLM_CALLS, LLM_ERRORS
+from app.tracing import get_tracer, set_span_attributes, span
+
+_tracer = get_tracer("app.core.llm.provider")
 
 logger = logging.getLogger(__name__)
 
@@ -479,38 +482,47 @@ def _generate_with_retries(
     cb = get_registry().get(route_provider)
     last_error: BaseException | None = None
     for attempt in range(_MAX_ATTEMPTS):
-        try:
-            if route_provider == "gemini":
-                text, used_model, token_count, raw = _call_gemini(prompt, resolved_model, api_key, system_prompt)
-            elif route_provider == "deepseek":
-                text, used_model, token_count, raw = _call_deepseek(prompt, resolved_model, api_key, system_prompt)
-            else:
-                text, used_model, token_count, raw = _call_openai(prompt, resolved_model, api_key, system_prompt)
-            latency_ms = (time.perf_counter() - start) * 1000
-            cb.record_success()
-            return LLMResponse(
-                text=text,
-                model_id=used_model,
-                token_count=token_count,
-                latency_ms=round(latency_ms, 2),
-                provider=route_provider,
-                raw_response=raw,
-            )
-        except Exception as exc:
-            last_error = exc
-            LLM_ERRORS.labels(provider=route_provider, error_type=type(exc).__name__).inc()
-            cb.record_failure()
-            logger.warning(
-                "LLM %s attempt %s/%s failed: %s",
-                route_provider,
-                attempt + 1,
-                _MAX_ATTEMPTS,
-                exc,
-            )
-            if attempt < _MAX_ATTEMPTS - 1 and _should_retry(exc, route_provider):
-                _sleep_backoff(attempt)
-                continue
-            raise
+        with span(_tracer, "llm_call_attempt", attributes={
+            "llm.provider": route_provider,
+            "llm.model": resolved_model,
+            "llm.attempt": attempt + 1,
+        }) as s:
+            try:
+                if route_provider == "gemini":
+                    text, used_model, token_count, raw = _call_gemini(prompt, resolved_model, api_key, system_prompt)
+                elif route_provider == "deepseek":
+                    text, used_model, token_count, raw = _call_deepseek(prompt, resolved_model, api_key, system_prompt)
+                else:
+                    text, used_model, token_count, raw = _call_openai(prompt, resolved_model, api_key, system_prompt)
+                latency_ms = (time.perf_counter() - start) * 1000
+                cb.record_success()
+                set_span_attributes(s, {
+                    "llm.token_count": token_count,
+                    "llm.latency_ms": round(latency_ms, 2),
+                })
+                return LLMResponse(
+                    text=text,
+                    model_id=used_model,
+                    token_count=token_count,
+                    latency_ms=round(latency_ms, 2),
+                    provider=route_provider,
+                    raw_response=raw,
+                )
+            except Exception as exc:
+                last_error = exc
+                LLM_ERRORS.labels(provider=route_provider, error_type=type(exc).__name__).inc()
+                cb.record_failure()
+                logger.warning(
+                    "LLM %s attempt %s/%s failed: %s",
+                    route_provider,
+                    attempt + 1,
+                    _MAX_ATTEMPTS,
+                    exc,
+                )
+                if attempt < _MAX_ATTEMPTS - 1 and _should_retry(exc, route_provider):
+                    _sleep_backoff(attempt)
+                    continue
+                raise
 
     assert last_error is not None
     raise last_error
@@ -530,91 +542,100 @@ def generate(
     route_provider, resolved_model, api_key = _resolve_route(eff_model_id)
     start = time.perf_counter()
 
-    cache = get_cache()
-    cached = cache.get(prompt, eff_model_id, system_prompt)
-    if cached is not None:
-        CACHE_HITS.inc()
-        latency_ms = (time.perf_counter() - start) * 1000
-        return LLMResponse(
-            text=cached.text,
-            model_id=cached.model_id,
-            token_count=cached.token_count,
-            latency_ms=round(latency_ms, 2),
-            provider=cached.provider,
-            raw_response=cached.raw_response,
-        )
-    CACHE_MISSES.inc()
-
-    if route_provider == "mock":
-        return _mock_response(prompt, start)
-
-    LLM_CALLS.labels(provider=route_provider).inc()
-
-    if route_provider == "local":
-        text, used_model, token_count, raw = _call_local_hf(prompt, resolved_model, system_prompt)
-        latency_ms = (time.perf_counter() - start) * 1000
-        resp = LLMResponse(
-            text=text,
-            model_id=used_model,
-            token_count=token_count,
-            latency_ms=round(latency_ms, 2),
-            provider="local",
-            raw_response=raw,
-        )
-        cache.put(prompt, eff_model_id, system_prompt, resp)
-        return resp
-
-    if route_provider == "ollama":
-        text, used_model, token_count, raw = _call_ollama(prompt, resolved_model, system_prompt)
-        latency_ms = (time.perf_counter() - start) * 1000
-        resp = LLMResponse(
-            text=text,
-            model_id=used_model,
-            token_count=token_count,
-            latency_ms=round(latency_ms, 2),
-            provider="ollama",
-            raw_response=raw,
-        )
-        cache.put(prompt, eff_model_id, system_prompt, resp)
-        return resp
-
-    cb = get_registry().get(route_provider)
-    if not cb.allow_request():
-        CB_REJECTIONS.labels(provider=route_provider).inc()
-        fallback = _find_fallback_provider(route_provider)
-        if fallback:
-            fb_provider, fb_model, fb_key = fallback
-            logger.warning(
-                "Circuit open for %s, falling back to %s",
-                route_provider, fb_provider,
+    with span(_tracer, "llm_generate", attributes={
+        "llm.provider": route_provider,
+        "llm.model": resolved_model,
+        "llm.model_id_requested": model_id or "",
+    }) as root_span:
+        cache = get_cache()
+        cached = cache.get(prompt, eff_model_id, system_prompt)
+        if cached is not None:
+            CACHE_HITS.inc()
+            latency_ms = (time.perf_counter() - start) * 1000
+            set_span_attributes(root_span, {"llm.cache_hit": True, "llm.latency_ms": round(latency_ms, 2)})
+            return LLMResponse(
+                text=cached.text,
+                model_id=cached.model_id,
+                token_count=cached.token_count,
+                latency_ms=round(latency_ms, 2),
+                provider=cached.provider,
+                raw_response=cached.raw_response,
             )
-            CB_FALLBACKS.labels(
-                original_provider=route_provider,
-                fallback_provider=fb_provider,
-            ).inc()
-            LLM_CALLS.labels(provider=fb_provider).inc()
-            resp = _generate_with_retries(
-                prompt, fb_provider, fb_model, fb_key, system_prompt, start,
+        CACHE_MISSES.inc()
+        set_span_attributes(root_span, {"llm.cache_hit": False})
+
+        if route_provider == "mock":
+            return _mock_response(prompt, start)
+
+        LLM_CALLS.labels(provider=route_provider).inc()
+
+        if route_provider == "local":
+            text, used_model, token_count, raw = _call_local_hf(prompt, resolved_model, system_prompt)
+            latency_ms = (time.perf_counter() - start) * 1000
+            resp = LLMResponse(
+                text=text,
+                model_id=used_model,
+                token_count=token_count,
+                latency_ms=round(latency_ms, 2),
+                provider="local",
+                raw_response=raw,
             )
             cache.put(prompt, eff_model_id, system_prompt, resp)
             return resp
-        if settings.CB_FALLBACK_TO_MOCK:
-            logger.warning(
-                "Circuit open for %s, no fallback available — using mock",
-                route_provider,
-            )
-            CB_FALLBACKS.labels(
-                original_provider=route_provider,
-                fallback_provider="mock",
-            ).inc()
-            return _mock_response(prompt, start)
-        raise CircuitOpenError(route_provider)
 
-    resp = _generate_with_retries(
-        prompt, route_provider, resolved_model, api_key, system_prompt, start,
-    )
-    cache.put(prompt, eff_model_id, system_prompt, resp)
-    return resp
+        if route_provider == "ollama":
+            text, used_model, token_count, raw = _call_ollama(prompt, resolved_model, system_prompt)
+            latency_ms = (time.perf_counter() - start) * 1000
+            resp = LLMResponse(
+                text=text,
+                model_id=used_model,
+                token_count=token_count,
+                latency_ms=round(latency_ms, 2),
+                provider="ollama",
+                raw_response=raw,
+            )
+            cache.put(prompt, eff_model_id, system_prompt, resp)
+            return resp
+
+        cb = get_registry().get(route_provider)
+        if not cb.allow_request():
+            CB_REJECTIONS.labels(provider=route_provider).inc()
+            set_span_attributes(root_span, {"llm.circuit_open": True})
+            fallback = _find_fallback_provider(route_provider)
+            if fallback:
+                fb_provider, fb_model, fb_key = fallback
+                logger.warning(
+                    "Circuit open for %s, falling back to %s",
+                    route_provider, fb_provider,
+                )
+                set_span_attributes(root_span, {"llm.fallback_provider": fb_provider})
+                CB_FALLBACKS.labels(
+                    original_provider=route_provider,
+                    fallback_provider=fb_provider,
+                ).inc()
+                LLM_CALLS.labels(provider=fb_provider).inc()
+                resp = _generate_with_retries(
+                    prompt, fb_provider, fb_model, fb_key, system_prompt, start,
+                )
+                cache.put(prompt, eff_model_id, system_prompt, resp)
+                return resp
+            if settings.CB_FALLBACK_TO_MOCK:
+                logger.warning(
+                    "Circuit open for %s, no fallback available — using mock",
+                    route_provider,
+                )
+                CB_FALLBACKS.labels(
+                    original_provider=route_provider,
+                    fallback_provider="mock",
+                ).inc()
+                return _mock_response(prompt, start)
+            raise CircuitOpenError(route_provider)
+
+        resp = _generate_with_retries(
+            prompt, route_provider, resolved_model, api_key, system_prompt, start,
+        )
+        cache.put(prompt, eff_model_id, system_prompt, resp)
+        return resp
 
 
 def get_available_providers() -> list[dict[str, str]]:

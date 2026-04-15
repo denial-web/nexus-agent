@@ -502,3 +502,16 @@ def circuit_breaker_status() -> dict:
     from app.core.llm.circuit_breaker import get_registry
 
     return {"breakers": get_registry().get_all_status()}
+
+
+@router.get("/tracing")
+def tracing_status() -> dict:
+    from app.tracing import is_available, is_enabled
+
+    return {
+        "enabled": is_enabled(),
+        "available": is_available(),
+        "service_name": settings.OTEL_SERVICE_NAME,
+        "exporter_endpoint": settings.OTEL_EXPORTER_ENDPOINT if is_enabled() else None,
+        "sample_rate": settings.OTEL_SAMPLE_RATE if is_enabled() else None,
+    }

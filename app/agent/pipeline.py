@@ -27,6 +27,9 @@ from app.core.llm.provider import generate
 from app.core.training.calibration import record_critic_calibration
 from app.core.training.labeler import push_failure
 from app.metrics import PIPELINE_LATENCY, PIPELINE_RUNS, record_critic_scores
+from app.tracing import get_tracer, set_span_attributes, span
+
+_tracer = get_tracer("app.agent.pipeline")
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +125,33 @@ def run(
 
     result = PipelineResult(trace_id=trace_id, session_id=session_id, status="pending")
 
+    with span(_tracer, "pipeline_run", attributes={
+        "pipeline.trace_id": trace_id,
+        "pipeline.session_id": session_id,
+        "pipeline.model_id": model_id or "",
+    }) as root:
+        result = _run_inner(prompt, session_id, model_id, db_session, start, trace_id, result)
+        set_span_attributes(root, {
+            "pipeline.status": result.status,
+            "pipeline.latency_ms": result.latency_ms,
+            "pipeline.model_id_used": result.model_id_used or "",
+        })
+    return result
+
+
+def _run_inner(
+    prompt: str,
+    session_id: str,
+    model_id: str | None,
+    db_session: Session | None,
+    start: float,
+    trace_id: str,
+    result: PipelineResult,
+) -> PipelineResult:
+    """Inner pipeline logic — separated to allow root span wrapper."""
     # ── Step 1: Input scan ──────────────────────────────
-    input_scan = scan_input(prompt, session_id=session_id)
+    with span(_tracer, "step1_immune_input_scan"):
+        input_scan = scan_input(prompt, session_id=session_id)
     result.immune_input = {
         "verdict": input_scan.verdict.value,
         "score": input_scan.score,
@@ -180,22 +208,23 @@ def run(
 
     # ── Step 2: A-S-FLC decision analysis ─────────────────
     system_hint: str | None = None
-    try:
-        from app.core.asflc.analyzer import analyze as asflc_analyze
+    with span(_tracer, "step2_asflc_analysis"):
+        try:
+            from app.core.asflc.analyzer import analyze as asflc_analyze
 
-        analysis = asflc_analyze(prompt, model_id=model_id)
-        if analysis is not None:
-            result.asflc = {
-                "chosen_path": analysis.chosen_path,
-                "confidence": analysis.confidence,
-                "loops": analysis.loops,
-                "all_paths": analysis.asflc.all_paths,
-                "converged": analysis.asflc.converged,
-                "chain_regret": analysis.asflc.chain_regret,
-            }
-            system_hint = analysis.system_hint
-    except Exception:
-        logger.warning("A-S-FLC analysis failed; continuing without it", exc_info=True)
+            analysis = asflc_analyze(prompt, model_id=model_id)
+            if analysis is not None:
+                result.asflc = {
+                    "chosen_path": analysis.chosen_path,
+                    "confidence": analysis.confidence,
+                    "loops": analysis.loops,
+                    "all_paths": analysis.asflc.all_paths,
+                    "converged": analysis.asflc.converged,
+                    "chain_regret": analysis.asflc.chain_regret,
+                }
+                system_hint = analysis.system_hint
+        except Exception:
+            logger.warning("A-S-FLC analysis failed; continuing without it", exc_info=True)
 
     # ── Step 3: LLM generation + Step 4: Critic evaluation ──
     arbiter = get_arbiter(db_session)
@@ -207,13 +236,15 @@ def run(
     }
 
     try:
-        llm_result = generate(prompt, model_id=model_id, system_prompt=system_hint)
+        with span(_tracer, "step3_llm_generation"):
+            llm_result = generate(prompt, model_id=model_id, system_prompt=system_hint)
         response = llm_result.text
         result.model_id_used = llm_result.model_id
         result.token_count = llm_result.token_count
         critic_ctx["model_id"] = result.model_id_used or model_id or "mock"
 
-        critic_result = arbiter.evaluate({**critic_ctx, "response": response})
+        with span(_tracer, "step4_critic_evaluation"):
+            critic_result = arbiter.evaluate({**critic_ctx, "response": response})
     except Exception as exc:
         logger.exception("Pipeline LLM or critic evaluation failed: trace_id=%s", trace_id)
         internal_error = str(exc) or type(exc).__name__
@@ -267,11 +298,12 @@ def run(
         return result
 
     # ── Step 5: Governance check ────────────────────────
-    gov_decision = evaluate_action(
-        action_type="respond",
-        resource="chat",
-        db_session=db_session,
-    )
+    with span(_tracer, "step5_governance_check"):
+        gov_decision = evaluate_action(
+            action_type="respond",
+            resource="chat",
+            db_session=db_session,
+        )
     result.governance = {
         "decision": gov_decision.decision,
         "policy": gov_decision.policy_name,
@@ -332,7 +364,8 @@ def run(
         return result
 
     # ── Step 6: Output scan ─────────────────────────────
-    output_scan = scan_output(response)
+    with span(_tracer, "step6_immune_output_scan"):
+        output_scan = scan_output(response)
     result.immune_output = {
         "verdict": output_scan.verdict.value,
         "score": output_scan.score,
