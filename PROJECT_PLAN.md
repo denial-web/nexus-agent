@@ -362,7 +362,7 @@ Failure traces awaiting human review for the training flywheel.
 
 ---
 
-## Testing — 577+ tests across 28 files
+## Testing — 602+ tests across 29 files
 
 - All tests in `tests/` directory
 - Fixtures in `tests/conftest.py` (test DB, session, TestClient)
@@ -401,6 +401,7 @@ Failure traces awaiting human review for the training flywheel.
 | `test_mcp_cli.py` | CLI subcommands: nexus mcp serve/backends/add, nexus skills import |
 | `test_redteam.py` | Adversarial red-team: encoding evasion, structural injection, multi-language advanced, indirect attacks, compound/chained, output scan, hardener edge cases, memory bank, false-positive resilience |
 | `test_benchmark.py` | Security benchmark: runner, per-category scoring, API endpoint, CLI commands, attack registry integrity, CI gating |
+| `test_circuit_breaker.py` | Circuit breaker state machine, rolling window, half-open recovery, provider fallback chain, concurrent access, stream fallback |
 
 ---
 

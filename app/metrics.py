@@ -51,6 +51,21 @@ try:
         "nexus_active_sessions",
         "Approximate active session count",
     )
+    CB_STATE_CHANGES = Counter(
+        "nexus_circuit_breaker_state_changes_total",
+        "Circuit breaker state transitions",
+        ["provider", "from_state", "to_state"],
+    )
+    CB_REJECTIONS = Counter(
+        "nexus_circuit_breaker_rejections_total",
+        "Requests rejected by open circuit breaker",
+        ["provider"],
+    )
+    CB_FALLBACKS = Counter(
+        "nexus_circuit_breaker_fallbacks_total",
+        "Requests routed to fallback provider due to open circuit",
+        ["original_provider", "fallback_provider"],
+    )
     _HAS_PROMETHEUS = True
 
 except ImportError:
@@ -82,6 +97,9 @@ except ImportError:
     CRITIC_SCORES = _noop
     LABELING_QUEUE_DEPTH = _noop
     ACTIVE_SESSIONS = _noop
+    CB_STATE_CHANGES = _noop
+    CB_REJECTIONS = _noop
+    CB_FALLBACKS = _noop
 
     logger.debug("prometheus_client not installed; metrics are no-ops")
 

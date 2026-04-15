@@ -93,7 +93,7 @@ app/
 - **Pydantic v2** — use `model_config = ConfigDict(...)`, not `class Config`
 - **SQLAlchemy 2.0** style — `Column()`, `declarative_base()`
 - **Logging** — `logger = logging.getLogger(__name__)`, never `print()`
-- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 577 tests across 28 test files. CI runs against both SQLite and Postgres 16.
+- **Tests** — pytest, `TestClient` for API tests, fixtures in `tests/conftest.py`. 602 tests across 29 test files. CI runs against both SQLite and Postgres 16.
 - **Alembic** — `render_as_batch=True` for SQLite, dialect-aware migrations (e.g., `USING` casts for Postgres)
 
 ## Pipeline Flow (app/agent/pipeline.py)
@@ -126,7 +126,7 @@ response. Events:
 
 ## Current State — All Phases Complete
 
-**577 passing tests** across 28 test files.
+**602 passing tests** across 29 test files.
 
 **Completed phases:**
 - **Phase 1**: Foundation — pipeline, models, immune scanner, arbiter, governance, tests
@@ -199,7 +199,8 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 - **Red-team test suite**: 93 adversarial tests (`test_redteam.py`) covering 9 attack categories: structural injection, encoding/obfuscation evasion, multi-language advanced, indirect/contextual, compound/chained, output scan evasion, hardener edge cases, memory bank adversarial, and false-positive resilience across all 11 scanner languages.
 - **Security benchmark**: `nexus benchmark` CLI command and `POST /api/agent/benchmark` endpoint. Runs 65 categorized attack payloads against the immune scanner, produces per-category detection rates and a composite security score. Supports `--json` for CI integration and `--threshold` for deployment gating (e.g. `nexus benchmark --threshold 0.95`).
 - **CI pipeline**: Three parallel GitHub Actions jobs — `lint` (ruff, mypy, pip-audit), `test-sqlite`, `test-postgres` (service container with Postgres 16). The Postgres job catches dialect mismatches (e.g., implicit type casts) that SQLite silently accepts.
-- **Concurrency safety**: Rate limiter uses `asyncio.Lock` for safe concurrent request counting. LLM client singletons use `threading.Lock` (double-checked locking) to prevent duplicate initialization under concurrent `generate_multi` threads. ECDSA key init likewise uses `threading.Lock`.
+- **Circuit breaker**: Per-provider circuit breaker (`app/core/llm/circuit_breaker.py`) with CLOSED → OPEN → HALF_OPEN state machine. After `CB_FAILURE_THRESHOLD` failures within `CB_WINDOW_SECONDS`, the circuit opens and fast-fails requests. After `CB_RECOVERY_TIMEOUT` seconds, a probe request tests recovery. Automatic fallback chain: Gemini → OpenAI → DeepSeek → mock (configurable via `CB_FALLBACK_TO_MOCK`). Thread-safe with rolling failure window. Prometheus metrics: `nexus_circuit_breaker_state_changes_total`, `nexus_circuit_breaker_rejections_total`, `nexus_circuit_breaker_fallbacks_total`.
+- **Concurrency safety**: Rate limiter uses `asyncio.Lock` for safe concurrent request counting. LLM client singletons use `threading.Lock` (double-checked locking) to prevent duplicate initialization under concurrent `generate_multi` threads. ECDSA key init likewise uses `threading.Lock`. Circuit breakers use per-instance `threading.Lock` for state transitions.
 - **Capability token lifecycle**: Consumed tokens are immediately deleted from the in-memory store. When the store reaches 10 000 entries, expired and used tokens are evicted before new issuance.
 - **Data retention**: Set `RETENTION_TRACE_DAYS`, `RETENTION_LABELING_DAYS`, `RETENTION_APPROVAL_DAYS`, `RETENTION_CALIBRATION_DAYS` to non-zero values to enable automatic purge. The scheduler runs retention every 12 cycles (~1h). Only terminal-state rows are purged (never pending work). For very large tables, consider DB partitioning as a complement.
 

@@ -22,8 +22,9 @@ from collections.abc import Generator
 from typing import Any
 
 from app.config import settings
+from app.core.llm.circuit_breaker import CircuitOpenError, get_registry
 from app.core.llm.models import LLMChunk, LLMResponse
-from app.metrics import LLM_CALLS, LLM_ERRORS
+from app.metrics import CB_FALLBACKS, CB_REJECTIONS, LLM_CALLS, LLM_ERRORS
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ def _get_ollama_client() -> Any:
 
 
 def reset_clients() -> None:
-    """Reset cached clients (useful for tests)."""
+    """Reset cached clients and circuit breakers (useful for tests)."""
     global _gemini_client, _gemini_client_key
     global _openai_client, _openai_client_key
     global _deepseek_client, _deepseek_client_key
@@ -135,6 +136,9 @@ def reset_clients() -> None:
     _deepseek_client = None
     _deepseek_client_key = ""
     _ollama_client = None
+    from app.core.llm.circuit_breaker import reset_registry
+
+    reset_registry()
 
 
 def mock_llm_text(prompt: str) -> str:
@@ -436,6 +440,80 @@ def _mock_response(prompt: str, latency_start: float) -> LLMResponse:
     )
 
 
+_FALLBACK_ORDER = ("gemini", "openai", "deepseek")
+
+
+def _find_fallback_provider(
+    failed_provider: str,
+) -> tuple[str, str, str] | None:
+    """Find next available provider in the fallback chain."""
+    gemini_key = settings.GEMINI_API_KEY.strip()
+    openai_key = settings.OPENAI_API_KEY.strip()
+    deepseek_key = settings.DEEPSEEK_API_KEY.strip()
+    provider_keys = {
+        "gemini": (gemini_key, settings.GEMINI_MODEL),
+        "openai": (openai_key, settings.OPENAI_MODEL),
+        "deepseek": (deepseek_key, settings.DEEPSEEK_MODEL),
+    }
+    registry = get_registry()
+    for provider in _FALLBACK_ORDER:
+        if provider == failed_provider:
+            continue
+        key, model = provider_keys.get(provider, ("", ""))
+        if key and registry.get(provider).allow_request():
+            return (provider, model, key)
+    return None
+
+
+def _generate_with_retries(
+    prompt: str,
+    route_provider: str,
+    resolved_model: str,
+    api_key: str,
+    system_prompt: str | None,
+    start: float,
+) -> LLMResponse:
+    """Core retry loop for a single provider. Records circuit breaker events."""
+    cb = get_registry().get(route_provider)
+    last_error: BaseException | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            if route_provider == "gemini":
+                text, used_model, token_count, raw = _call_gemini(prompt, resolved_model, api_key, system_prompt)
+            elif route_provider == "deepseek":
+                text, used_model, token_count, raw = _call_deepseek(prompt, resolved_model, api_key, system_prompt)
+            else:
+                text, used_model, token_count, raw = _call_openai(prompt, resolved_model, api_key, system_prompt)
+            latency_ms = (time.perf_counter() - start) * 1000
+            cb.record_success()
+            return LLMResponse(
+                text=text,
+                model_id=used_model,
+                token_count=token_count,
+                latency_ms=round(latency_ms, 2),
+                provider=route_provider,
+                raw_response=raw,
+            )
+        except Exception as exc:
+            last_error = exc
+            LLM_ERRORS.labels(provider=route_provider, error_type=type(exc).__name__).inc()
+            cb.record_failure()
+            logger.warning(
+                "LLM %s attempt %s/%s failed: %s",
+                route_provider,
+                attempt + 1,
+                _MAX_ATTEMPTS,
+                exc,
+            )
+            if attempt < _MAX_ATTEMPTS - 1 and _should_retry(exc, route_provider):
+                _sleep_backoff(attempt)
+                continue
+            raise
+
+    assert last_error is not None
+    raise last_error
+
+
 def generate(
     prompt: str,
     model_id: str | None = None,
@@ -479,41 +557,39 @@ def generate(
             raw_response=raw,
         )
 
-    last_error: BaseException | None = None
-    for attempt in range(_MAX_ATTEMPTS):
-        try:
-            if route_provider == "gemini":
-                text, used_model, token_count, raw = _call_gemini(prompt, resolved_model, api_key, system_prompt)
-            elif route_provider == "deepseek":
-                text, used_model, token_count, raw = _call_deepseek(prompt, resolved_model, api_key, system_prompt)
-            else:
-                text, used_model, token_count, raw = _call_openai(prompt, resolved_model, api_key, system_prompt)
-            latency_ms = (time.perf_counter() - start) * 1000
-            return LLMResponse(
-                text=text,
-                model_id=used_model,
-                token_count=token_count,
-                latency_ms=round(latency_ms, 2),
-                provider=route_provider,
-                raw_response=raw,
-            )
-        except Exception as exc:
-            last_error = exc
-            LLM_ERRORS.labels(provider=route_provider, error_type=type(exc).__name__).inc()
+    cb = get_registry().get(route_provider)
+    if not cb.allow_request():
+        CB_REJECTIONS.labels(provider=route_provider).inc()
+        fallback = _find_fallback_provider(route_provider)
+        if fallback:
+            fb_provider, fb_model, fb_key = fallback
             logger.warning(
-                "LLM %s attempt %s/%s failed: %s",
-                route_provider,
-                attempt + 1,
-                _MAX_ATTEMPTS,
-                exc,
+                "Circuit open for %s, falling back to %s",
+                route_provider, fb_provider,
             )
-            if attempt < _MAX_ATTEMPTS - 1 and _should_retry(exc, route_provider):
-                _sleep_backoff(attempt)
-                continue
-            raise
+            CB_FALLBACKS.labels(
+                original_provider=route_provider,
+                fallback_provider=fb_provider,
+            ).inc()
+            LLM_CALLS.labels(provider=fb_provider).inc()
+            return _generate_with_retries(
+                prompt, fb_provider, fb_model, fb_key, system_prompt, start,
+            )
+        if settings.CB_FALLBACK_TO_MOCK:
+            logger.warning(
+                "Circuit open for %s, no fallback available — using mock",
+                route_provider,
+            )
+            CB_FALLBACKS.labels(
+                original_provider=route_provider,
+                fallback_provider="mock",
+            ).inc()
+            return _mock_response(prompt, start)
+        raise CircuitOpenError(route_provider)
 
-    assert last_error is not None
-    raise last_error
+    return _generate_with_retries(
+        prompt, route_provider, resolved_model, api_key, system_prompt, start,
+    )
 
 
 def get_available_providers() -> list[dict[str, str]]:
@@ -686,6 +762,48 @@ def _collect_stream_ollama(
     return [LLMChunk(text=p, index=i, is_final=i == len(pieces) - 1) for i, p in enumerate(pieces)]
 
 
+def _stream_with_retries(
+    prompt: str,
+    route_provider: str,
+    resolved_model: str,
+    api_key: str,
+    system_prompt: str | None,
+) -> Generator[LLMChunk]:
+    """Core streaming retry loop for a single provider."""
+    cb = get_registry().get(route_provider)
+    last_error: BaseException | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            if route_provider == "ollama":
+                collected = _collect_stream_ollama(prompt, resolved_model, system_prompt)
+            elif route_provider == "gemini":
+                collected = _collect_stream_gemini(prompt, resolved_model, api_key, system_prompt)
+            elif route_provider == "deepseek":
+                collected = _collect_stream_deepseek(prompt, resolved_model, api_key, system_prompt)
+            else:
+                collected = _collect_stream_openai(prompt, resolved_model, api_key, system_prompt)
+            cb.record_success()
+            yield from collected
+            return
+        except Exception as exc:
+            last_error = exc
+            cb.record_failure()
+            logger.warning(
+                "LLM stream %s attempt %s/%s failed: %s",
+                route_provider,
+                attempt + 1,
+                _MAX_ATTEMPTS,
+                exc,
+            )
+            if attempt < _MAX_ATTEMPTS - 1 and _should_retry(exc, route_provider):
+                _sleep_backoff(attempt)
+                continue
+            raise
+
+    assert last_error is not None
+    raise last_error
+
+
 def generate_stream(
     prompt: str,
     model_id: str | None = None,
@@ -714,32 +832,37 @@ def generate_stream(
         yield LLMChunk(text=text, index=0, is_final=True)
         return
 
-    last_error: BaseException | None = None
-    for attempt in range(_MAX_ATTEMPTS):
-        try:
-            if route_provider == "ollama":
-                collected = _collect_stream_ollama(prompt, resolved_model, system_prompt)
-            elif route_provider == "gemini":
-                collected = _collect_stream_gemini(prompt, resolved_model, api_key, system_prompt)
-            elif route_provider == "deepseek":
-                collected = _collect_stream_deepseek(prompt, resolved_model, api_key, system_prompt)
-            else:
-                collected = _collect_stream_openai(prompt, resolved_model, api_key, system_prompt)
-            yield from collected
-            return
-        except Exception as exc:
-            last_error = exc
+    cb = get_registry().get(route_provider)
+    if not cb.allow_request():
+        CB_REJECTIONS.labels(provider=route_provider).inc()
+        fallback = _find_fallback_provider(route_provider)
+        if fallback:
+            fb_provider, fb_model, fb_key = fallback
             logger.warning(
-                "LLM stream %s attempt %s/%s failed: %s",
-                route_provider,
-                attempt + 1,
-                _MAX_ATTEMPTS,
-                exc,
+                "Circuit open for %s (stream), falling back to %s",
+                route_provider, fb_provider,
             )
-            if attempt < _MAX_ATTEMPTS - 1 and _should_retry(exc, route_provider):
-                _sleep_backoff(attempt)
-                continue
-            raise
+            CB_FALLBACKS.labels(
+                original_provider=route_provider,
+                fallback_provider=fb_provider,
+            ).inc()
+            yield from _stream_with_retries(
+                prompt, fb_provider, fb_model, fb_key, system_prompt,
+            )
+            return
+        if settings.CB_FALLBACK_TO_MOCK:
+            logger.warning(
+                "Circuit open for %s (stream), no fallback — using mock",
+                route_provider,
+            )
+            CB_FALLBACKS.labels(
+                original_provider=route_provider,
+                fallback_provider="mock",
+            ).inc()
+            yield LLMChunk(text=mock_llm_text(prompt), index=0, is_final=True)
+            return
+        raise CircuitOpenError(route_provider)
 
-    assert last_error is not None
-    raise last_error
+    yield from _stream_with_retries(
+        prompt, route_provider, resolved_model, api_key, system_prompt,
+    )

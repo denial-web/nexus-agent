@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     COMPARE_TIMEOUT_SECONDS: float = 30.0
     COMPARE_MAX_MODELS: int = 5
 
+    # Circuit breaker for LLM providers
+    CB_FAILURE_THRESHOLD: int = 5
+    CB_RECOVERY_TIMEOUT: float = 30.0
+    CB_WINDOW_SECONDS: float = 60.0
+    CB_FALLBACK_TO_MOCK: bool = True
+
     # Critic defaults
     CRITIC_MODEL: str = ""
     CRITIC_CHUNK_SIZE: int = 64
