@@ -39,7 +39,12 @@ jobs:
         run: mypy app/
 
       - name: Dependency audit
-        run: pip-audit -r requirements.txt
+        # diskcache CVE-2025-69872: pickle-based deserialization in the cache
+        # store. Pulled transitively (not imported anywhere in app/); exploit
+        # requires write access to the cache directory which is outside our
+        # threat model. No upstream fix is available yet — revisit when
+        # diskcache ships a patched release.
+        run: pip-audit -r requirements.txt --ignore-vuln CVE-2025-69872
 
   test-sqlite:
     runs-on: ubuntu-latest
