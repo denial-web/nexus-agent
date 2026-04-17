@@ -47,9 +47,21 @@ omit = ["app/templates/*", "app/static/*"]
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
-fail_under = 0
+precision = 2
+# Baseline measured at 83%; set the gate 3 points below so normal fluctuation
+# doesn't break CI while a real regression (e.g. a new feature landing without
+# tests) does. Ratchet this up as coverage improves — never down.
+fail_under = 80
 exclude_lines = [
     "pragma: no cover",
     "if __name__ == .__main__.",
     "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
 ]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"

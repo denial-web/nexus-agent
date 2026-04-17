@@ -74,7 +74,36 @@ jobs:
         run: alembic upgrade head
 
       - name: Run tests (SQLite)
-        run: pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+        run: |
+          pytest tests/ -v --tb=short \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-report=html
+
+      - name: Append coverage summary to job summary
+        if: always()
+        run: |
+          echo "## Coverage (SQLite)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          coverage report --skip-covered | tail -30 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html-sqlite
+          path: htmlcov/
+          retention-days: 14
+
+      - name: Upload coverage XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-sqlite
+          path: coverage.xml
+          retention-days: 14
 
   test-postgres:
     runs-on: ubuntu-latest
@@ -130,4 +159,24 @@ jobs:
         run: alembic upgrade head
 
       - name: Run tests (Postgres)
-        run: pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+        run: |
+          pytest tests/ -v --tb=short \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml
+
+      - name: Append coverage summary to job summary
+        if: always()
+        run: |
+          echo "## Coverage (Postgres)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          coverage report --skip-covered | tail -30 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-postgres
+          path: coverage.xml
+          retention-days: 14

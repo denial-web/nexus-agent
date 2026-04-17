@@ -23,6 +23,8 @@ env/
 .mypy_cache/
 htmlcov/
 .coverage
+.coverage.*
+coverage.xml
 
 data/models/
 data/finetune/
