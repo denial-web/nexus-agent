@@ -82,6 +82,13 @@ jobs:
           POSTGRES_USER: nexus
           POSTGRES_PASSWORD: nexus_test
           POSTGRES_DB: nexus_test
+          # Run the Postgres server in a non-UTC timezone so timezone-related
+          # portability bugs (e.g. tz-aware datetimes being shifted when
+          # stored in TIMESTAMP WITHOUT TIME ZONE columns) fail loudly in CI
+          # instead of silently passing. The app pins every session to UTC
+          # in app/db.py; this env sanity-checks that pin.
+          TZ: Asia/Phnom_Penh
+          PGTZ: Asia/Phnom_Penh
         ports:
           - 5432:5432
         options: >-

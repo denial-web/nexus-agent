@@ -49,8 +49,7 @@ class TestBenchmarkRunner:
         report = run_benchmark()
         for cat in report.categories:
             assert cat.detection_rate == 1.0, (
-                f"Category {cat.category} has {cat.failed} failure(s): "
-                f"{cat.payloads_failed}"
+                f"Category {cat.category} has {cat.failed} failure(s): {cat.payloads_failed}"
             )
 
     def test_report_serialization(self):
@@ -128,7 +127,9 @@ class TestBenchmarkCLI:
     def test_cli_json_output(self):
         result = subprocess.run(
             [sys.executable, "-m", "app.cli", "benchmark", "--json"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
@@ -138,7 +139,9 @@ class TestBenchmarkCLI:
     def test_cli_table_output(self):
         result = subprocess.run(
             [sys.executable, "-m", "app.cli", "benchmark"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert result.returncode == 0
         assert "Security Benchmark" in result.stdout
@@ -146,9 +149,10 @@ class TestBenchmarkCLI:
 
     def test_cli_category_filter(self):
         result = subprocess.run(
-            [sys.executable, "-m", "app.cli", "benchmark",
-             "--json", "--categories", "false_positive"],
-            capture_output=True, text=True, timeout=30,
+            [sys.executable, "-m", "app.cli", "benchmark", "--json", "--categories", "false_positive"],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
@@ -157,16 +161,19 @@ class TestBenchmarkCLI:
     def test_cli_threshold_pass(self):
         result = subprocess.run(
             [sys.executable, "-m", "app.cli", "benchmark", "--threshold", "0.9"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert result.returncode == 0
         assert "GATE PASSED" in result.stdout
 
     def test_cli_invalid_category(self):
         result = subprocess.run(
-            [sys.executable, "-m", "app.cli", "benchmark",
-             "--categories", "not_a_real_category"],
-            capture_output=True, text=True, timeout=30,
+            [sys.executable, "-m", "app.cli", "benchmark", "--categories", "not_a_real_category"],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert result.returncode == 1
         assert "Unknown categories" in result.stderr

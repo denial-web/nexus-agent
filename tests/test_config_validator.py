@@ -192,8 +192,10 @@ class TestTimeouts:
 class TestProviders:
     def test_no_providers_warns(self):
         s = _make_settings(
-            GEMINI_API_KEY="", OPENAI_API_KEY="",
-            DEEPSEEK_API_KEY="", LOCAL_HF_MODEL_ID="",
+            GEMINI_API_KEY="",
+            OPENAI_API_KEY="",
+            DEEPSEEK_API_KEY="",
+            LOCAL_HF_MODEL_ID="",
             LOCAL_ONLY=False,
         )
         warnings = _warnings(validate(s))
@@ -218,16 +220,20 @@ class TestProviders:
 class TestDatabase:
     def test_sqlite_in_prod_warns(self):
         s = _make_settings(
-            ENVIRONMENT="production", DATABASE_URL="sqlite:///./nexus.db",
-            NEXUS_API_KEY="key", SESSION_SECRET="secret",
+            ENVIRONMENT="production",
+            DATABASE_URL="sqlite:///./nexus.db",
+            NEXUS_API_KEY="key",
+            SESSION_SECRET="secret",
         )
         warnings = _warnings(validate(s))
         assert any("SQLite" in w for w in warnings)
 
     def test_postgres_in_prod_no_warn(self):
         s = _make_settings(
-            ENVIRONMENT="production", DATABASE_URL="postgresql://u:p@host/db",
-            NEXUS_API_KEY="key", SESSION_SECRET="secret",
+            ENVIRONMENT="production",
+            DATABASE_URL="postgresql://u:p@host/db",
+            NEXUS_API_KEY="key",
+            SESSION_SECRET="secret",
         )
         warnings = _warnings(validate(s))
         assert not any("SQLite" in w for w in warnings)

@@ -506,12 +506,16 @@ def _generate_with_retries(
     last_error: BaseException | None = None
     rid = get_request_id()
     for attempt in range(_MAX_ATTEMPTS):
-        with span(_tracer, "llm_call_attempt", attributes={
-            "llm.provider": route_provider,
-            "llm.model": resolved_model,
-            "llm.attempt": attempt + 1,
-            "request.id": rid,
-        }) as s:
+        with span(
+            _tracer,
+            "llm_call_attempt",
+            attributes={
+                "llm.provider": route_provider,
+                "llm.model": resolved_model,
+                "llm.attempt": attempt + 1,
+                "request.id": rid,
+            },
+        ) as s:
             try:
                 if route_provider == "gemini":
                     text, used_model, token_count, raw = _call_gemini(prompt, resolved_model, api_key, system_prompt)
@@ -521,10 +525,13 @@ def _generate_with_retries(
                     text, used_model, token_count, raw = _call_openai(prompt, resolved_model, api_key, system_prompt)
                 latency_ms = (time.perf_counter() - start) * 1000
                 cb.record_success()
-                set_span_attributes(s, {
-                    "llm.token_count": token_count,
-                    "llm.latency_ms": round(latency_ms, 2),
-                })
+                set_span_attributes(
+                    s,
+                    {
+                        "llm.token_count": token_count,
+                        "llm.latency_ms": round(latency_ms, 2),
+                    },
+                )
                 return LLMResponse(
                     text=text,
                     model_id=used_model,
@@ -570,12 +577,16 @@ def generate(
     start = time.perf_counter()
 
     rid = get_request_id()
-    with span(_tracer, "llm_generate", attributes={
-        "llm.provider": route_provider,
-        "llm.model": resolved_model,
-        "llm.model_id_requested": model_id or "",
-        "request.id": rid,
-    }) as root_span:
+    with span(
+        _tracer,
+        "llm_generate",
+        attributes={
+            "llm.provider": route_provider,
+            "llm.model": resolved_model,
+            "llm.model_id_requested": model_id or "",
+            "request.id": rid,
+        },
+    ) as root_span:
         cache = get_cache()
         cached = cache.get(prompt, eff_model_id, system_prompt)
         if cached is not None:
@@ -638,7 +649,8 @@ def generate(
                 fb_provider, fb_model, fb_key = fallback
                 logger.warning(
                     "Circuit open for %s, falling back to %s",
-                    route_provider, fb_provider,
+                    route_provider,
+                    fb_provider,
                 )
                 set_span_attributes(root_span, {"llm.fallback_provider": fb_provider})
                 CB_FALLBACKS.labels(
@@ -647,7 +659,12 @@ def generate(
                 ).inc()
                 LLM_CALLS.labels(provider=fb_provider).inc()
                 resp = _generate_with_retries(
-                    prompt, fb_provider, fb_model, fb_key, system_prompt, start,
+                    prompt,
+                    fb_provider,
+                    fb_model,
+                    fb_key,
+                    system_prompt,
+                    start,
                 )
                 cache.put(prompt, eff_model_id, system_prompt, resp)
                 return resp
@@ -664,7 +681,12 @@ def generate(
             raise CircuitOpenError(route_provider)
 
         resp = _generate_with_retries(
-            prompt, route_provider, resolved_model, api_key, system_prompt, start,
+            prompt,
+            route_provider,
+            resolved_model,
+            api_key,
+            system_prompt,
+            start,
         )
         cache.put(prompt, eff_model_id, system_prompt, resp)
         return resp
@@ -918,14 +940,19 @@ def generate_stream(
             fb_provider, fb_model, fb_key = fallback
             logger.warning(
                 "Circuit open for %s (stream), falling back to %s",
-                route_provider, fb_provider,
+                route_provider,
+                fb_provider,
             )
             CB_FALLBACKS.labels(
                 original_provider=route_provider,
                 fallback_provider=fb_provider,
             ).inc()
             yield from _stream_with_retries(
-                prompt, fb_provider, fb_model, fb_key, system_prompt,
+                prompt,
+                fb_provider,
+                fb_model,
+                fb_key,
+                system_prompt,
             )
             return
         if settings.CB_FALLBACK_TO_MOCK:
@@ -942,5 +969,9 @@ def generate_stream(
         raise CircuitOpenError(route_provider)
 
     yield from _stream_with_retries(
-        prompt, route_provider, resolved_model, api_key, system_prompt,
+        prompt,
+        route_provider,
+        resolved_model,
+        api_key,
+        system_prompt,
     )

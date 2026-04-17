@@ -36,7 +36,9 @@ _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
 
 
 def get_provider_health(
-    *, run_probes: bool = False, probe_timeout: float | None = None,
+    *,
+    run_probes: bool = False,
+    probe_timeout: float | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble unified health info for all known providers.
 
@@ -69,15 +71,17 @@ def get_provider_health(
 
         overall = _compute_overall(configured, cb, probe)
 
-        providers.append({
-            "name": name,
-            "display_name": cfg["display_name"],
-            "configured": configured,
-            "default_model": default_model,
-            "circuit_breaker": cb,
-            "probe": probe,
-            "overall_status": overall,
-        })
+        providers.append(
+            {
+                "name": name,
+                "display_name": cfg["display_name"],
+                "configured": configured,
+                "default_model": default_model,
+                "circuit_breaker": cb,
+                "probe": probe,
+                "overall_status": overall,
+            }
+        )
 
     return providers
 

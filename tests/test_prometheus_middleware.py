@@ -61,12 +61,15 @@ class TestUpdateDbPoolGauges:
         mock_engine = MagicMock()
         mock_engine.pool = mock_pool
 
-        with patch("app.metrics.DB_POOL_SIZE") as m_size, \
-             patch("app.metrics.DB_POOL_CHECKED_IN") as m_in, \
-             patch("app.metrics.DB_POOL_CHECKED_OUT") as m_out, \
-             patch("app.metrics.DB_POOL_OVERFLOW") as m_ov, \
-             patch("app.db.engine", mock_engine):
+        with (
+            patch("app.metrics.DB_POOL_SIZE") as m_size,
+            patch("app.metrics.DB_POOL_CHECKED_IN") as m_in,
+            patch("app.metrics.DB_POOL_CHECKED_OUT") as m_out,
+            patch("app.metrics.DB_POOL_OVERFLOW") as m_ov,
+            patch("app.db.engine", mock_engine),
+        ):
             import app.metrics
+
             orig = app.metrics._HAS_PROMETHEUS
             app.metrics._HAS_PROMETHEUS = True
             try:
@@ -85,6 +88,7 @@ class TestUpdateDbPoolGauges:
 
     def test_silent_on_exception(self):
         import app.metrics
+
         orig = app.metrics._HAS_PROMETHEUS
         app.metrics._HAS_PROMETHEUS = True
         try:

@@ -60,9 +60,7 @@ _DASHBOARD_CSP = (
     "frame-ancestors 'none'"
 )
 _API_CSP = "default-src 'none'; frame-ancestors 'none'"
-_PERMISSIONS_POLICY = (
-    "camera=(), microphone=(), geolocation=(), interest-cohort=()"
-)
+_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), interest-cohort=()"
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -93,9 +91,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("Content-Security-Policy", csp)
 
         if settings.ENVIRONMENT.lower() not in ("development", "dev", "test"):
-            response.headers.setdefault(
-                "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
-            )
+            response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 
         return response
 
@@ -249,7 +245,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not result.allowed:
             logger.warning(
                 "Rate limit exceeded for %s (%d RPM, backend=%s)",
-                client_ip, rpm, backend.backend_type,
+                client_ip,
+                rpm,
+                backend.backend_type,
             )
             from app.errors import _build_error_body
 
@@ -392,7 +390,7 @@ class LegacyApiDeprecationMiddleware(BaseHTTPMiddleware):
         if sunset:
             response.headers["Sunset"] = sunset
 
-        v1_path = "/v1/" + path[len("/api/"):]
+        v1_path = "/v1/" + path[len("/api/") :]
         response.headers.setdefault("Link", f'<{v1_path}>; rel="successor-version"')
 
         return response
@@ -465,7 +463,9 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         status_class = f"{status_code // 100}xx"
 
         HTTP_REQUEST_LATENCY.labels(
-            method=method, path_template=path_label, status_code=str(status_code),
+            method=method,
+            path_template=path_label,
+            status_code=str(status_code),
         ).observe(elapsed)
         HTTP_REQUESTS_TOTAL.labels(method=method, status_class=status_class).inc()
 

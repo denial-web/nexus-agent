@@ -14,12 +14,15 @@ from app.services.idempotency import (
 # InProcessStore
 # ---------------------------------------------------------------------------
 
+
 class TestInProcessStore:
     def test_set_and_get(self):
         store = InProcessStore(max_keys=100, ttl_seconds=60)
         cr = CachedResponse(
-            status_code=200, body=b'{"ok":true}',
-            content_type="application/json", created_at=time.time(),
+            status_code=200,
+            body=b'{"ok":true}',
+            content_type="application/json",
+            created_at=time.time(),
         )
         store.set("key1", cr)
         result = store.get("key1")
@@ -34,8 +37,10 @@ class TestInProcessStore:
     def test_ttl_expiration(self):
         store = InProcessStore(ttl_seconds=1)
         cr = CachedResponse(
-            status_code=200, body=b"ok",
-            content_type="text/plain", created_at=time.time() - 2,
+            status_code=200,
+            body=b"ok",
+            content_type="text/plain",
+            created_at=time.time() - 2,
         )
         store.set("expired", cr)
         assert store.get("expired") is None
@@ -44,20 +49,30 @@ class TestInProcessStore:
         store = InProcessStore(max_keys=2, ttl_seconds=60)
         now = time.time()
         for i in range(3):
-            store.set(f"k{i}", CachedResponse(
-                status_code=200, body=f"v{i}".encode(),
-                content_type="text/plain", created_at=now,
-            ))
+            store.set(
+                f"k{i}",
+                CachedResponse(
+                    status_code=200,
+                    body=f"v{i}".encode(),
+                    content_type="text/plain",
+                    created_at=now,
+                ),
+            )
         assert store.get("k0") is None
         assert store.get("k1") is not None
         assert store.get("k2") is not None
 
     def test_reset_clears_all(self):
         store = InProcessStore()
-        store.set("a", CachedResponse(
-            status_code=200, body=b"x",
-            content_type="text/plain", created_at=time.time(),
-        ))
+        store.set(
+            "a",
+            CachedResponse(
+                status_code=200,
+                body=b"x",
+                content_type="text/plain",
+                created_at=time.time(),
+            ),
+        )
         assert store.size == 1
         store.reset()
         assert store.size == 0
@@ -81,6 +96,7 @@ class TestInProcessStore:
 # ---------------------------------------------------------------------------
 # RedisStore (mocked)
 # ---------------------------------------------------------------------------
+
 
 class TestRedisStoreMocked:
     def _make_store(self):
@@ -168,6 +184,7 @@ class TestRedisStoreMocked:
 # get_store singleton
 # ---------------------------------------------------------------------------
 
+
 class TestGetStore:
     def setup_method(self):
         reset_store()
@@ -197,6 +214,7 @@ class TestGetStore:
 # ---------------------------------------------------------------------------
 # IdempotencyMiddleware via API
 # ---------------------------------------------------------------------------
+
 
 class TestIdempotencyMiddleware:
     """Integration tests using the FastAPI TestClient."""
@@ -273,7 +291,8 @@ class TestIdempotencyMiddleware:
         reset_store()
         key = "legacy-test-key-1"
         self._run_pipeline(
-            client, {"prompt": "hello"},
+            client,
+            {"prompt": "hello"},
         )
         resp = client.post(
             "/api/agent/run",
@@ -361,9 +380,7 @@ class TestRedisInflight:
     def test_release_calls_delete(self):
         store = self._make_store()
         store.release_inflight("key1")
-        store._client.delete.assert_called_once_with(
-            "nexus:idempotency:inflight:key1"
-        )
+        store._client.delete.assert_called_once_with("nexus:idempotency:inflight:key1")
 
     def test_acquire_with_none_client_returns_true(self):
         store = RedisStore.__new__(RedisStore)
@@ -453,10 +470,12 @@ class TestInflightMiddleware:
 # Config validation
 # ---------------------------------------------------------------------------
 
+
 class TestIdempotencyConfigValidation:
     def test_low_ttl_warning(self):
         from app.config import Settings
         from app.services.config_validator import validate
+
         s = Settings(IDEMPOTENCY_TTL=0)
         issues = validate(s)
         msgs = [i.message for i in issues]
@@ -465,6 +484,7 @@ class TestIdempotencyConfigValidation:
     def test_zero_max_keys_error(self):
         from app.config import Settings
         from app.services.config_validator import validate
+
         s = Settings(IDEMPOTENCY_MAX_KEYS=0)
         issues = validate(s)
         errors = [i for i in issues if i.level == "error"]
@@ -473,6 +493,7 @@ class TestIdempotencyConfigValidation:
     def test_default_values_no_idempotency_issues(self):
         from app.config import Settings
         from app.services.config_validator import validate
+
         s = Settings()
         issues = validate(s)
         msgs = [i.message for i in issues]
@@ -483,6 +504,7 @@ class TestIdempotencyConfigValidation:
 # Middleware ordering: auth MUST run before idempotency
 # ---------------------------------------------------------------------------
 
+
 class TestAuthRunsBeforeIdempotency:
     """Regression: unauthenticated requests must never touch the idempotency store.
 
@@ -492,6 +514,7 @@ class TestAuthRunsBeforeIdempotency:
 
     def test_unauthed_request_does_not_cache(self, client, monkeypatch):
         from app.config import settings as _settings
+
         monkeypatch.setattr(_settings, "NEXUS_API_KEY", "auth-order-key-1")
         monkeypatch.setattr(_settings, "RATE_LIMIT_RPM", 0)
         reset_store()
@@ -512,6 +535,7 @@ class TestAuthRunsBeforeIdempotency:
 
     def test_authed_after_unauthed_runs_fresh(self, client, monkeypatch):
         from app.config import settings as _settings
+
         monkeypatch.setattr(_settings, "NEXUS_API_KEY", "auth-order-key-2")
         monkeypatch.setattr(_settings, "RATE_LIMIT_RPM", 0)
         reset_store()
@@ -538,6 +562,7 @@ class TestAuthRunsBeforeIdempotency:
     def test_invalid_short_key_rejected_only_when_authed(self, client, monkeypatch):
         """Auth runs first: invalid-length key from unauthed client returns 401, not 400."""
         from app.config import settings as _settings
+
         monkeypatch.setattr(_settings, "NEXUS_API_KEY", "auth-order-key-3")
         monkeypatch.setattr(_settings, "RATE_LIMIT_RPM", 0)
 

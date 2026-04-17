@@ -27,15 +27,17 @@ from app.models.trace import Trace
 
 logger = logging.getLogger(__name__)
 
-_EVENT_TYPES = frozenset({
-    "pipeline_run",
-    "input_blocked",
-    "output_blocked",
-    "critic_halt",
-    "governance_denied",
-    "approval_requested",
-    "approval_resolved",
-})
+_EVENT_TYPES = frozenset(
+    {
+        "pipeline_run",
+        "input_blocked",
+        "output_blocked",
+        "critic_halt",
+        "governance_denied",
+        "approval_requested",
+        "approval_resolved",
+    }
+)
 
 _SEVERITY_MAP = {
     "input_blocked": "high",
@@ -151,8 +153,11 @@ def export_audit_logs(
     records: list[dict[str, Any]] = []
 
     trace_types = want_types & {
-        "pipeline_run", "input_blocked", "output_blocked",
-        "critic_halt", "governance_denied",
+        "pipeline_run",
+        "input_blocked",
+        "output_blocked",
+        "critic_halt",
+        "governance_denied",
     }
     if trace_types:
         q = db.query(Trace)

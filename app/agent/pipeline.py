@@ -125,17 +125,24 @@ def run(
 
     result = PipelineResult(trace_id=trace_id, session_id=session_id, status="pending")
 
-    with span(_tracer, "pipeline_run", attributes={
-        "pipeline.trace_id": trace_id,
-        "pipeline.session_id": session_id,
-        "pipeline.model_id": model_id or "",
-    }) as root:
+    with span(
+        _tracer,
+        "pipeline_run",
+        attributes={
+            "pipeline.trace_id": trace_id,
+            "pipeline.session_id": session_id,
+            "pipeline.model_id": model_id or "",
+        },
+    ) as root:
         result = _run_inner(prompt, session_id, model_id, db_session, start, trace_id, result)
-        set_span_attributes(root, {
-            "pipeline.status": result.status,
-            "pipeline.latency_ms": result.latency_ms,
-            "pipeline.model_id_used": result.model_id_used or "",
-        })
+        set_span_attributes(
+            root,
+            {
+                "pipeline.status": result.status,
+                "pipeline.latency_ms": result.latency_ms,
+                "pipeline.model_id_used": result.model_id_used or "",
+            },
+        )
     return result
 
 
@@ -174,10 +181,15 @@ def _run_inner(
             )
         _persist_trace(result, prompt, db_session)
         _record_run(result)
-        _fire_webhook("input_blocked", {
-            "trace_id": trace_id, "session_id": session_id,
-            "score": input_scan.score, "triggers": input_scan.triggers,
-        })
+        _fire_webhook(
+            "input_blocked",
+            {
+                "trace_id": trace_id,
+                "session_id": session_id,
+                "score": input_scan.score,
+                "triggers": input_scan.triggers,
+            },
+        )
         return result
 
     if input_scan.verdict == Verdict.FLAG:
@@ -290,11 +302,15 @@ def _run_inner(
 
         _persist_trace(result, prompt, db_session)
         _record_run(result)
-        _fire_webhook("critic_halt", {
-            "trace_id": trace_id, "session_id": session_id,
-            "halted_by": critic_result.halted_by,
-            "scores": serialized_scores,
-        })
+        _fire_webhook(
+            "critic_halt",
+            {
+                "trace_id": trace_id,
+                "session_id": session_id,
+                "halted_by": critic_result.halted_by,
+                "scores": serialized_scores,
+            },
+        )
         return result
 
     # ── Step 5: Governance check ────────────────────────
@@ -355,12 +371,16 @@ def _run_inner(
             result.governance["approval_request_id"] = approval.id
         _persist_trace(result, prompt, db_session)
         _record_run(result)
-        _fire_webhook("approval_needed", {
-            "trace_id": trace_id, "session_id": session_id,
-            "risk_level": gov_decision.risk_level,
-            "policy": gov_decision.policy_name,
-            "approval_request_id": result.approval_request_id,
-        })
+        _fire_webhook(
+            "approval_needed",
+            {
+                "trace_id": trace_id,
+                "session_id": session_id,
+                "risk_level": gov_decision.risk_level,
+                "policy": gov_decision.policy_name,
+                "approval_request_id": result.approval_request_id,
+            },
+        )
         return result
 
     # ── Step 6: Output scan ─────────────────────────────
@@ -388,10 +408,14 @@ def _run_inner(
             )
         _persist_trace(result, prompt, db_session)
         _record_run(result)
-        _fire_webhook("output_blocked", {
-            "trace_id": trace_id, "session_id": session_id,
-            "triggers": output_scan.triggers,
-        })
+        _fire_webhook(
+            "output_blocked",
+            {
+                "trace_id": trace_id,
+                "session_id": session_id,
+                "triggers": output_scan.triggers,
+            },
+        )
         return result
 
     # ── Step 7: Success ─────────────────────────────────

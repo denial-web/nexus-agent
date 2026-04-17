@@ -166,12 +166,14 @@ class RedisStore(IdempotencyStore):
         if self._client is None:
             return
         try:
-            data = json.dumps({
-                "status_code": response.status_code,
-                "body": response.body.decode("utf-8"),
-                "content_type": response.content_type,
-                "created_at": response.created_at,
-            })
+            data = json.dumps(
+                {
+                    "status_code": response.status_code,
+                    "body": response.body.decode("utf-8"),
+                    "content_type": response.content_type,
+                    "created_at": response.created_at,
+                }
+            )
             self._client.setex(f"{self._KEY_PREFIX}{key}", self._ttl, data)
         except Exception:
             logger.warning("Redis idempotency set failed for %s", key, exc_info=True)
@@ -207,7 +209,9 @@ class RedisStore(IdempotencyStore):
                 cursor: int = 0
                 while True:
                     cursor, keys = self._client.scan(
-                        cursor, match=f"{prefix}*", count=100,
+                        cursor,
+                        match=f"{prefix}*",
+                        count=100,
                     )
                     if keys:
                         self._client.delete(*keys)

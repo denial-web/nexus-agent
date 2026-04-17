@@ -35,10 +35,7 @@ class ScanResult:
 # ── Unicode normalization ──────────────────────────────────────────
 
 _ZERO_WIDTH = re.compile(
-    "[\u200b\u200c\u200d\u2060\ufeff\u2063\u2062\u2061"
-    "\u202a\u202b\u202c\u202d\u202e"
-    "\u2066\u2067\u2068\u2069"
-    "\u00ad]"
+    "[\u200b\u200c\u200d\u2060\ufeff\u2063\u2062\u2061\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u00ad]"
 )
 
 _COMBINING_MARKS = re.compile(r"[\u0300-\u036f]")
@@ -351,11 +348,7 @@ def scan_input(
         score += 0.5
 
     for pattern in _compiled_injection:
-        if (
-            pattern.search(prompt)
-            or pattern.search(norm_strip)
-            or pattern.search(norm_space)
-        ):
+        if pattern.search(prompt) or pattern.search(norm_strip) or pattern.search(norm_space):
             triggers.append(f"injection:{pattern.pattern[:40]}")
             score += 0.4
 

@@ -178,11 +178,13 @@ class TestRedisBackendMocked:
     def test_reset_scans_and_deletes(self):
         backend = _make_redis_backend()
         backend._client.scan.return_value = (
-            0, ["nexus:ratelimit:ip1", "nexus:ratelimit:ip2"],
+            0,
+            ["nexus:ratelimit:ip1", "nexus:ratelimit:ip2"],
         )
         backend.reset()
         backend._client.delete.assert_called_once_with(
-            "nexus:ratelimit:ip1", "nexus:ratelimit:ip2",
+            "nexus:ratelimit:ip1",
+            "nexus:ratelimit:ip2",
         )
 
     def test_reconnect_cooldown(self):

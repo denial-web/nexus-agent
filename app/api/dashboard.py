@@ -318,7 +318,7 @@ def circuit_breaker_reset(
     if provider not in all_names:
         safe_name = html_mod.escape(provider)
         return HTMLResponse(
-            f'<h1>Not found</h1><p>Provider &ldquo;{safe_name}&rdquo; not found.</p>'
+            f"<h1>Not found</h1><p>Provider &ldquo;{safe_name}&rdquo; not found.</p>"
             '<p><a href="/dashboard/circuit-breakers">Back</a></p>',
             status_code=404,
         )
@@ -331,7 +331,8 @@ def providers_dashboard(request: Request, probe: bool = False) -> Response:
     from app.services.provider_health import get_provider_health
 
     providers = get_provider_health(
-        run_probes=probe, probe_timeout=settings.HEALTH_PROBE_TIMEOUT,
+        run_probes=probe,
+        probe_timeout=settings.HEALTH_PROBE_TIMEOUT,
     )
     configured_count = sum(1 for p in providers if p["configured"])
     healthy_count = sum(1 for p in providers if p["overall_status"] == "healthy")

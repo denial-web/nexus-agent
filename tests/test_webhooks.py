@@ -38,11 +38,13 @@ class _RecordingHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
-        self.received.append({
-            "body": body,
-            "headers": dict(self.headers),
-            "path": self.path,
-        })
+        self.received.append(
+            {
+                "body": body,
+                "headers": dict(self.headers),
+                "path": self.path,
+            }
+        )
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'{"ok": true}')
@@ -138,6 +140,7 @@ class TestFireEvent:
 
         assert count == 1
         import time
+
         time.sleep(0.5)
         assert len(received) >= 1
         body = json.loads(received[0]["body"])
@@ -184,11 +187,14 @@ class TestFireEvent:
 
 class TestWebhookAPI:
     def test_create_webhook(self, client):
-        resp = client.post("/api/webhooks", json={
-            "url": "https://hooks.example.com/nexus",
-            "events": ["critic_halt", "input_blocked"],
-            "description": "Test hook",
-        })
+        resp = client.post(
+            "/api/webhooks",
+            json={
+                "url": "https://hooks.example.com/nexus",
+                "events": ["critic_halt", "input_blocked"],
+                "description": "Test hook",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["url"] == "https://hooks.example.com/nexus"
@@ -196,24 +202,35 @@ class TestWebhookAPI:
         assert data["enabled"] is True
 
     def test_create_webhook_invalid_event(self, client):
-        resp = client.post("/api/webhooks", json={
-            "url": "https://example.com",
-            "events": ["nonexistent_event"],
-        })
+        resp = client.post(
+            "/api/webhooks",
+            json={
+                "url": "https://example.com",
+                "events": ["nonexistent_event"],
+            },
+        )
         assert resp.status_code == 422
 
     def test_list_webhooks(self, client):
-        client.post("/api/webhooks", json={
-            "url": "https://a.com", "events": ["*"],
-        })
+        client.post(
+            "/api/webhooks",
+            json={
+                "url": "https://a.com",
+                "events": ["*"],
+            },
+        )
         resp = client.get("/api/webhooks")
         assert resp.status_code == 200
         assert len(resp.json()["webhooks"]) >= 1
 
     def test_get_webhook(self, client):
-        create = client.post("/api/webhooks", json={
-            "url": "https://get-test.com", "events": ["*"],
-        })
+        create = client.post(
+            "/api/webhooks",
+            json={
+                "url": "https://get-test.com",
+                "events": ["*"],
+            },
+        )
         wh_id = create.json()["id"]
         resp = client.get(f"/api/webhooks/{wh_id}")
         assert resp.status_code == 200
@@ -224,23 +241,34 @@ class TestWebhookAPI:
         assert resp.status_code == 404
 
     def test_update_webhook(self, client):
-        create = client.post("/api/webhooks", json={
-            "url": "https://old.com", "events": ["*"],
-        })
+        create = client.post(
+            "/api/webhooks",
+            json={
+                "url": "https://old.com",
+                "events": ["*"],
+            },
+        )
         wh_id = create.json()["id"]
-        resp = client.patch(f"/api/webhooks/{wh_id}", json={
-            "url": "https://new.com",
-            "events": ["critic_halt"],
-            "enabled": False,
-        })
+        resp = client.patch(
+            f"/api/webhooks/{wh_id}",
+            json={
+                "url": "https://new.com",
+                "events": ["critic_halt"],
+                "enabled": False,
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["url"] == "https://new.com"
         assert resp.json()["enabled"] is False
 
     def test_re_enable_resets_failures(self, client):
-        create = client.post("/api/webhooks", json={
-            "url": "https://re-enable.com", "events": ["*"],
-        })
+        create = client.post(
+            "/api/webhooks",
+            json={
+                "url": "https://re-enable.com",
+                "events": ["*"],
+            },
+        )
         wh_id = create.json()["id"]
         client.patch(f"/api/webhooks/{wh_id}", json={"enabled": False})
         resp = client.patch(f"/api/webhooks/{wh_id}", json={"enabled": True})
@@ -248,9 +276,13 @@ class TestWebhookAPI:
         assert resp.json()["last_error"] is None
 
     def test_delete_webhook(self, client):
-        create = client.post("/api/webhooks", json={
-            "url": "https://delete.com", "events": ["*"],
-        })
+        create = client.post(
+            "/api/webhooks",
+            json={
+                "url": "https://delete.com",
+                "events": ["*"],
+            },
+        )
         wh_id = create.json()["id"]
         resp = client.delete(f"/api/webhooks/{wh_id}")
         assert resp.status_code == 200
@@ -289,7 +321,7 @@ class TestComputeBackoff:
     def test_delay_within_bounds(self):
         for attempt in range(5):
             delay = compute_backoff(attempt, base=1.0, maximum=30.0)
-            assert 0 <= delay <= min(30.0, 1.0 * (2 ** attempt))
+            assert 0 <= delay <= min(30.0, 1.0 * (2**attempt))
 
     def test_capped_at_maximum(self):
         for _ in range(20):
@@ -361,7 +393,10 @@ class TestDeliverBackoff:
         with patch("app.services.webhooks.time.sleep", side_effect=lambda d: sleep_calls.append(d)):
             with patch("app.services.webhooks._record_failure"):
                 result = _deliver(
-                    "http://127.0.0.1:1", _test_payload(), None, "wh-bo",
+                    "http://127.0.0.1:1",
+                    _test_payload(),
+                    None,
+                    "wh-bo",
                 )
         assert result is False
         assert len(sleep_calls) == 2
@@ -374,16 +409,25 @@ class TestDeliverBackoff:
 
         class FakeResp:
             status = 404
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def read(self): return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b""
 
         sleep_calls: list[float] = []
         with patch("app.services.webhooks.time.sleep", side_effect=lambda d: sleep_calls.append(d)):
             with patch("urllib.request.urlopen", return_value=FakeResp()):
                 with patch("app.services.webhooks._record_failure") as mock_fail:
                     result = _deliver(
-                        "http://example.com", _test_payload(), None, "wh-4xx",
+                        "http://example.com",
+                        _test_payload(),
+                        None,
+                        "wh-4xx",
                     )
 
         assert result is False
@@ -398,16 +442,25 @@ class TestDeliverBackoff:
 
         class FakeResp:
             status = 503
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def read(self): return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b""
 
         sleep_calls: list[float] = []
         with patch("app.services.webhooks.time.sleep", side_effect=lambda d: sleep_calls.append(d)):
             with patch("urllib.request.urlopen", return_value=FakeResp()):
                 with patch("app.services.webhooks._record_failure") as mock_fail:
                     result = _deliver(
-                        "http://example.com", _test_payload(), None, "wh-5xx",
+                        "http://example.com",
+                        _test_payload(),
+                        None,
+                        "wh-5xx",
                     )
 
         assert result is False
@@ -425,14 +478,23 @@ class TestDeliverBackoff:
             def __init__(self):
                 call_count["n"] += 1
                 self.status = 503 if call_count["n"] == 1 else 200
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def read(self): return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b""
 
         with patch("app.services.webhooks.time.sleep"):
             with patch("urllib.request.urlopen", side_effect=lambda *a, **k: FailOnceResp()):
                 result = _deliver(
-                    "http://example.com", _test_payload(), None, "wh-ok",
+                    "http://example.com",
+                    _test_payload(),
+                    None,
+                    "wh-ok",
                 )
 
         assert result is True
@@ -447,7 +509,10 @@ class TestDeliverBackoff:
         with patch("app.services.webhooks.time.sleep", side_effect=lambda d: sleep_calls.append(d)):
             with patch("app.services.webhooks._record_failure"):
                 result = _deliver(
-                    "http://127.0.0.1:1", _test_payload(), None, "wh-1r",
+                    "http://127.0.0.1:1",
+                    _test_payload(),
+                    None,
+                    "wh-1r",
                 )
         assert result is False
         assert len(sleep_calls) == 0

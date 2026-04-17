@@ -16,9 +16,15 @@ class TestProbeGemini:
     def test_reachable(self):
         class FakeResp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def read(self): return b'{"models":[]}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b'{"models":[]}'
 
         with patch("urllib.request.urlopen", return_value=FakeResp()):
             result = _probe_gemini(5.0)
@@ -38,9 +44,15 @@ class TestProbeOpenAI:
     def test_reachable(self):
         class FakeResp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def read(self): return b'{"data":[]}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b'{"data":[]}'
 
         with patch("urllib.request.urlopen", return_value=FakeResp()):
             result = _probe_openai(5.0)
@@ -50,7 +62,11 @@ class TestProbeOpenAI:
         import urllib.error
 
         err = urllib.error.HTTPError(
-            "https://api.openai.com/v1/models", 401, "Unauthorized", {}, None,
+            "https://api.openai.com/v1/models",
+            401,
+            "Unauthorized",
+            {},
+            None,
         )
         with patch("urllib.request.urlopen", side_effect=err):
             result = _probe_openai(5.0)
@@ -62,8 +78,12 @@ class TestProbeDeepSeek:
     def test_reachable(self):
         class FakeResp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         with patch("urllib.request.urlopen", return_value=FakeResp()):
             result = _probe_deepseek(5.0)
@@ -81,8 +101,12 @@ class TestProbeOllama:
     def test_reachable(self):
         class FakeResp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
 
         with patch("urllib.request.urlopen", return_value=FakeResp()):
             result = _probe_ollama(5.0)
@@ -111,9 +135,15 @@ class TestProbeProviders:
 
         class FakeResp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def read(self): return b"{}"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b"{}"
 
         with patch("urllib.request.urlopen", return_value=FakeResp()):
             result = probe_providers(timeout=5.0)
@@ -129,9 +159,15 @@ class TestProbeProviders:
 
         class FakeResp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def read(self): return b"{}"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b"{}"
 
         with patch("urllib.request.urlopen", return_value=FakeResp()):
             result = probe_providers(timeout=5.0)
@@ -148,9 +184,15 @@ class TestProbeProviders:
 
         class FakeResp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def read(self): return b"{}"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b"{}"
 
         with patch("urllib.request.urlopen", return_value=FakeResp()):
             result = probe_providers()
@@ -166,9 +208,15 @@ class TestProbeProviders:
 
         class FakeResp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def read(self): return b"{}"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b"{}"
 
         def side_effect(req, **kwargs):
             call_count["n"] += 1
@@ -209,9 +257,15 @@ class TestReadinessDeepEndpoint:
 
         class FakeResp:
             status = 200
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def read(self): return b"{}"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b"{}"
 
         with patch("urllib.request.urlopen", return_value=FakeResp()):
             resp = client.get("/health/ready?deep=true")

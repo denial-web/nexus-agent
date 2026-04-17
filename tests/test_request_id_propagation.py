@@ -114,9 +114,7 @@ class TestOpenAIExtraHeaders:
                 _call_openai("hello", "gpt-4o-mini", "fake-key", None)
 
             call_kwargs = mock_client.chat.completions.create.call_args
-            assert call_kwargs.kwargs.get("extra_headers") == {
-                "X-Request-ID": "oai-req-42"
-            }
+            assert call_kwargs.kwargs.get("extra_headers") == {"X-Request-ID": "oai-req-42"}
         finally:
             request_id_var.reset(token)
 
@@ -142,9 +140,7 @@ class TestOpenAIExtraHeaders:
                 _call_deepseek("hello", "deepseek-chat", "fake-key", None)
 
             call_kwargs = mock_client.chat.completions.create.call_args
-            assert call_kwargs.kwargs.get("extra_headers") == {
-                "X-Request-ID": "ds-req-99"
-            }
+            assert call_kwargs.kwargs.get("extra_headers") == {"X-Request-ID": "ds-req-99"}
         finally:
             request_id_var.reset(token)
 

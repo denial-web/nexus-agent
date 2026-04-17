@@ -75,7 +75,10 @@ class InProcessBackend(RateLimiterBackend):
             oldest = min(self._requests[key]) if self._requests[key] else now
             retry_after = max(1, int(oldest + window_seconds - now) + 1)
             return RateLimitResult(
-                allowed=False, remaining=0, retry_after=retry_after, limit=limit,
+                allowed=False,
+                remaining=0,
+                retry_after=retry_after,
+                limit=limit,
             )
 
         self._requests[key].append(now)
@@ -187,7 +190,10 @@ class RedisBackend(RateLimiterBackend):
         if self._client is None:
             if not self._try_reconnect():
                 return RateLimitResult(
-                    allowed=True, remaining=limit, retry_after=0, limit=limit,
+                    allowed=True,
+                    remaining=limit,
+                    retry_after=0,
+                    limit=limit,
                 )
 
         import os
@@ -233,7 +239,10 @@ class RedisBackend(RateLimiterBackend):
                 except Exception:
                     pass
             return RateLimitResult(
-                allowed=True, remaining=limit, retry_after=0, limit=limit,
+                allowed=True,
+                remaining=limit,
+                retry_after=0,
+                limit=limit,
             )
 
     def reset(self) -> None:
@@ -243,7 +252,9 @@ class RedisBackend(RateLimiterBackend):
             cursor: int = 0
             while True:
                 cursor, keys = self._client.scan(
-                    cursor, match="nexus:ratelimit:*", count=100,
+                    cursor,
+                    match="nexus:ratelimit:*",
+                    count=100,
                 )
                 if keys:
                     self._client.delete(*keys)

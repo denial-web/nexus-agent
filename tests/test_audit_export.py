@@ -85,7 +85,9 @@ class TestTraceToRecord:
 
     def test_mcp_fields_included(self, db_session):
         trace = _make_trace(
-            db_session, mcp_backend="github", mcp_tool_name="list_repos",
+            db_session,
+            mcp_backend="github",
+            mcp_tool_name="list_repos",
         )
         record = _trace_to_record(trace)
         assert record["data"]["mcp_backend"] == "github"
@@ -146,7 +148,9 @@ class TestExportAuditLogs:
         _make_trace(db_session, immune_verdict="block", status="blocked")
         _make_trace(db_session, status="completed")
         records = export_audit_logs(
-            db_session, event_types=["input_blocked"], limit=100,
+            db_session,
+            event_types=["input_blocked"],
+            limit=100,
         )
         assert all(r["event_type"] == "input_blocked" for r in records)
 
@@ -167,12 +171,13 @@ class TestExportAuditLogs:
         _make_trace(db_session, status="completed")
         records = export_audit_logs(db_session, status="blocked", limit=100)
         trace_event_types = {
-            "pipeline_run", "input_blocked", "output_blocked",
-            "critic_halt", "governance_denied",
+            "pipeline_run",
+            "input_blocked",
+            "output_blocked",
+            "critic_halt",
+            "governance_denied",
         }
-        trace_records = [
-            r for r in records if r["event_type"] in trace_event_types
-        ]
+        trace_records = [r for r in records if r["event_type"] in trace_event_types]
         assert len(trace_records) >= 1
         for r in trace_records:
             assert r["data"]["status"] == "blocked"
@@ -186,7 +191,9 @@ class TestExportAuditLogs:
     def test_includes_approvals(self, db_session):
         _make_approval(db_session)
         records = export_audit_logs(
-            db_session, event_types=["approval_requested"], limit=100,
+            db_session,
+            event_types=["approval_requested"],
+            limit=100,
         )
         assert len(records) >= 1
         assert records[0]["event_type"] == "approval_requested"

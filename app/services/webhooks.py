@@ -109,7 +109,9 @@ def _safe_log_exception(msg: str, *args: Any) -> None:
 
 def _sign_payload(payload_bytes: bytes, secret: str) -> str:
     return hmac.new(
-        secret.encode(), payload_bytes, hashlib.sha256,
+        secret.encode(),
+        payload_bytes,
+        hashlib.sha256,
     ).hexdigest()
 
 
@@ -129,7 +131,7 @@ def compute_backoff(
         base = settings.WEBHOOK_BACKOFF_BASE
     if maximum is None:
         maximum = settings.WEBHOOK_BACKOFF_MAX
-    exp_delay = min(maximum, base * (2 ** attempt))
+    exp_delay = min(maximum, base * (2**attempt))
     return random.uniform(0, exp_delay)
 
 
@@ -173,7 +175,10 @@ def _deliver(
                 if 200 <= status < 300:
                     logger.info(
                         "Webhook %s delivered: event=%s url=%s status=%d",
-                        webhook_id, payload.event, url, status,
+                        webhook_id,
+                        payload.event,
+                        url,
+                        status,
                     )
                     return True
 
@@ -181,20 +186,33 @@ def _deliver(
                 if not _is_retryable_status(status):
                     logger.warning(
                         "Webhook %s non-retryable status: event=%s url=%s status=%d",
-                        webhook_id, payload.event, url, status,
+                        webhook_id,
+                        payload.event,
+                        url,
+                        status,
                     )
                     _record_failure(webhook_id, last_error)
                     return False
 
                 logger.warning(
                     "Webhook %s retryable status: event=%s url=%s status=%d (attempt %d/%d)",
-                    webhook_id, payload.event, url, status, attempt + 1, max_retries,
+                    webhook_id,
+                    payload.event,
+                    url,
+                    status,
+                    attempt + 1,
+                    max_retries,
                 )
         except Exception as exc:
             last_error = str(exc)
             logger.warning(
                 "Webhook %s failed: event=%s url=%s error=%s (attempt %d/%d)",
-                webhook_id, payload.event, url, exc, attempt + 1, max_retries,
+                webhook_id,
+                payload.event,
+                url,
+                exc,
+                attempt + 1,
+                max_retries,
             )
 
         if attempt < max_retries - 1:
@@ -222,7 +240,8 @@ def _record_failure(webhook_id: str, error: str) -> None:
                     wh.enabled = False
                     logger.warning(
                         "Webhook %s auto-disabled after %d consecutive failures",
-                        webhook_id, wh.failure_count,
+                        webhook_id,
+                        wh.failure_count,
                     )
                 session.commit()
         finally:
@@ -295,11 +314,7 @@ def fire_event(
             own_session = True
         try:
             webhooks = session.query(Webhook).filter_by(enabled=True).all()
-            matched = [
-                wh for wh in webhooks
-                if event_str in (wh.events or [])
-                or "*" in (wh.events or [])
-            ]
+            matched = [wh for wh in webhooks if event_str in (wh.events or []) or "*" in (wh.events or [])]
         finally:
             if own_session:
                 session.close()

@@ -20,10 +20,7 @@ logger = logging.getLogger(__name__)
 def _probe_gemini(timeout: float) -> dict[str, Any]:
     import urllib.request
 
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models"
-        f"?key={settings.GEMINI_API_KEY}&pageSize=1"
-    )
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={settings.GEMINI_API_KEY}&pageSize=1"
     start = time.monotonic()
     try:
         req = urllib.request.Request(url, method="GET")
@@ -113,10 +110,7 @@ def probe_providers(
 
     results: dict[str, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=len(targets)) as pool:
-        futures = {
-            pool.submit(probe_fn, timeout): name
-            for name, probe_fn in targets.items()
-        }
+        futures = {pool.submit(probe_fn, timeout): name for name, probe_fn in targets.items()}
         for future in as_completed(futures, timeout=timeout + 5):
             name = futures[future]
             try:

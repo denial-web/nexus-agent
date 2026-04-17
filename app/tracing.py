@@ -54,11 +54,13 @@ def init_tracing() -> None:
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
-    resource = Resource.create({
-        "service.name": settings.OTEL_SERVICE_NAME,
-        "service.version": "1.0.0",
-        "deployment.environment": settings.ENVIRONMENT,
-    })
+    resource = Resource.create(
+        {
+            "service.name": settings.OTEL_SERVICE_NAME,
+            "service.version": "1.0.0",
+            "deployment.environment": settings.ENVIRONMENT,
+        }
+    )
     sampler = TraceIdRatioBased(settings.OTEL_SAMPLE_RATE)
     _tracer_provider = TracerProvider(resource=resource, sampler=sampler)
 

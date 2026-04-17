@@ -205,7 +205,7 @@ def normalize_path(path: str) -> str:
     """
     for prefix in _PATH_NORMALIZE_PREFIXES:
         if path.startswith(prefix):
-            rest = path[len(prefix):]
+            rest = path[len(prefix) :]
             parts = rest.split("/")
             normalized = []
             for i, part in enumerate(parts):

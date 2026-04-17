@@ -114,9 +114,7 @@ class TestMigrationIntegrity:
         script = ScriptDirectory.from_config(cfg)
         for rev in script.walk_revisions("base", "heads"):
             module = rev.module
-            assert hasattr(module, "downgrade"), (
-                f"Revision {rev.revision} missing downgrade()"
-            )
+            assert hasattr(module, "downgrade"), f"Revision {rev.revision} missing downgrade()"
 
 
 class TestModelMigrationDrift:
@@ -135,14 +133,7 @@ class TestModelMigrationDrift:
             mc = MigrationContext.configure(conn)
             diff = compare_metadata(mc, Base.metadata)
 
-        meaningful = [
-            op for op in diff
-            if not (
-                isinstance(op, tuple)
-                and len(op) >= 3
-                and op[0] == "add_index"
-            )
-        ]
+        meaningful = [op for op in diff if not (isinstance(op, tuple) and len(op) >= 3 and op[0] == "add_index")]
         assert meaningful == [], (
             f"Model/migration drift detected. Pending operations:\n"
             f"{meaningful}\n"

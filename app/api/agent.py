@@ -119,13 +119,17 @@ def run_agent(req: RunRequest, db: Session = Depends(get_db)) -> dict:
     timeout = settings.REQUEST_TIMEOUT_SECONDS
     try:
         future = _timeout_pool.submit(
-            run, prompt=req.prompt, session_id=req.session_id,
-            model_id=req.model_id, db_session=db,
+            run,
+            prompt=req.prompt,
+            session_id=req.session_id,
+            model_id=req.model_id,
+            db_session=db,
         )
         result = future.result(timeout=timeout if timeout > 0 else None)
     except FuturesTimeoutError:
         raise NexusAPIError(
-            504, "request_timeout",
+            504,
+            "request_timeout",
             f"Pipeline did not complete within {timeout}s timeout",
         ) from None
 
@@ -169,14 +173,19 @@ def run_agentic(req: AgentRunRequest, db: Session = Depends(get_db)) -> dict:
     timeout = settings.REQUEST_TIMEOUT_SECONDS
     try:
         future = _timeout_pool.submit(
-            run_agent, prompt=req.prompt, session_id=req.session_id,
-            model_id=req.model_id, db_session=db,
-            user_feedback=req.user_feedback, resume_state=req.resume_state,
+            run_agent,
+            prompt=req.prompt,
+            session_id=req.session_id,
+            model_id=req.model_id,
+            db_session=db,
+            user_feedback=req.user_feedback,
+            resume_state=req.resume_state,
         )
         r = future.result(timeout=timeout if timeout > 0 else None)
     except FuturesTimeoutError:
         raise NexusAPIError(
-            504, "request_timeout",
+            504,
+            "request_timeout",
             f"Agent loop did not complete within {timeout}s timeout",
         ) from None
     return {

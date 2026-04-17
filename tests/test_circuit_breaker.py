@@ -52,7 +52,8 @@ class TestCircuitBreakerStates:
 
     def test_open_to_half_open_after_timeout(self):
         config = CircuitBreakerConfig(
-            failure_threshold=2, recovery_timeout_seconds=0.05,
+            failure_threshold=2,
+            recovery_timeout_seconds=0.05,
         )
         cb = CircuitBreaker("test", config)
         cb.record_failure()
@@ -64,7 +65,8 @@ class TestCircuitBreakerStates:
 
     def test_half_open_success_closes(self):
         config = CircuitBreakerConfig(
-            failure_threshold=2, recovery_timeout_seconds=0.01,
+            failure_threshold=2,
+            recovery_timeout_seconds=0.01,
         )
         cb = CircuitBreaker("test", config)
         cb.record_failure()
@@ -76,7 +78,8 @@ class TestCircuitBreakerStates:
 
     def test_half_open_failure_reopens(self):
         config = CircuitBreakerConfig(
-            failure_threshold=2, recovery_timeout_seconds=0.01,
+            failure_threshold=2,
+            recovery_timeout_seconds=0.01,
         )
         cb = CircuitBreaker("test", config)
         cb.record_failure()
@@ -177,7 +180,8 @@ class TestCircuitBreakerRegistry:
 class TestConcurrency:
     def test_thread_safe_failure_recording(self):
         config = CircuitBreakerConfig(
-            failure_threshold=100, rolling_window_seconds=10.0,
+            failure_threshold=100,
+            rolling_window_seconds=10.0,
         )
         cb = CircuitBreaker("test", config)
         errors: list[Exception] = []
@@ -293,7 +297,9 @@ class TestProviderFallback:
     def test_failed_call_records_failure(self, monkeypatch):
         monkeypatch.setattr(settings, "GEMINI_API_KEY", "fake-key")
         monkeypatch.setattr(
-            settings, "CB_FAILURE_THRESHOLD", 100,
+            settings,
+            "CB_FAILURE_THRESHOLD",
+            100,
         )
         reset_registry()
 

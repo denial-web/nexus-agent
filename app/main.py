@@ -604,15 +604,10 @@ def readiness_check(deep: bool = False) -> Response:
             from app.services.health_probe import probe_providers
 
             provider_probes = probe_providers()
-            unreachable = [
-                name for name, info in provider_probes.items()
-                if not info.get("reachable")
-            ]
+            unreachable = [name for name, info in provider_probes.items() if not info.get("reachable")]
             checks["provider_probes"] = provider_probes
             if unreachable:
-                checks["provider_probes_warning"] = (
-                    f"Unreachable providers: {', '.join(unreachable)}"
-                )
+                checks["provider_probes_warning"] = f"Unreachable providers: {', '.join(unreachable)}"
         except Exception:
             checks["provider_probes"] = {"error": "probe failed"}
 

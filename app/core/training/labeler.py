@@ -207,10 +207,13 @@ def export_for_training(
         try:
             from app.services.webhooks import fire_event
 
-            fire_event("export_complete", {
-                "batch_id": batch_id,
-                "exported_count": len(training_data),
-            })
+            fire_event(
+                "export_complete",
+                {
+                    "batch_id": batch_id,
+                    "exported_count": len(training_data),
+                },
+            )
         except Exception:
             logger.debug("Webhook fire failed for export_complete", exc_info=True)
 

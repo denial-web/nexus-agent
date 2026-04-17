@@ -1,6 +1,5 @@
 """Tests for CORS hardening: config validation, header behavior, credential safety."""
 
-
 import pytest
 from app.config import settings
 from app.services.config_validator import validate

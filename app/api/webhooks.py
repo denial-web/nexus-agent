@@ -73,7 +73,9 @@ def get_webhook(webhook_id: str, db: Session = Depends(get_db)) -> dict:
 
 @router.patch("/{webhook_id}")
 def update_webhook(
-    webhook_id: str, body: WebhookUpdate, db: Session = Depends(get_db),
+    webhook_id: str,
+    body: WebhookUpdate,
+    db: Session = Depends(get_db),
 ) -> dict:
     wh = db.query(Webhook).filter_by(id=webhook_id).first()
     if not wh:

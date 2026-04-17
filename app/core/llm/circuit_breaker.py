@@ -71,7 +71,8 @@ class CircuitBreaker:
                 self._half_open_successes = 0
                 logger.info(
                     "Circuit breaker %s: OPEN → HALF_OPEN (%.1fs elapsed)",
-                    self.name, elapsed,
+                    self.name,
+                    elapsed,
                 )
         return self._state
 
@@ -100,9 +101,7 @@ class CircuitBreaker:
                 logger.warning("Circuit breaker %s: HALF_OPEN → OPEN (probe failed)", self.name)
             else:
                 cutoff = now - self._config.rolling_window_seconds
-                self._failure_timestamps = [
-                    t for t in self._failure_timestamps if t > cutoff
-                ]
+                self._failure_timestamps = [t for t in self._failure_timestamps if t > cutoff]
                 self._failure_timestamps.append(now)
 
                 if len(self._failure_timestamps) >= self._config.failure_threshold:
@@ -133,22 +132,18 @@ class CircuitBreaker:
             state = self._evaluate_state()
             now = time.monotonic()
             cutoff = now - self._config.rolling_window_seconds
-            recent_failures = sum(
-                1 for t in self._failure_timestamps if t > cutoff
-            )
+            recent_failures = sum(1 for t in self._failure_timestamps if t > cutoff)
             last_ts = (
                 max(self._failure_timestamps)
                 if self._failure_timestamps
-                else self._last_failure_time if self._last_failure_time > 0 else 0
+                else self._last_failure_time
+                if self._last_failure_time > 0
+                else 0
             )
-            since_last_failure = (
-                round(now - last_ts, 1) if last_ts > 0 else None
-            )
+            since_last_failure = round(now - last_ts, 1) if last_ts > 0 else None
             recovery_remaining = None
             if state == CircuitState.OPEN and self._last_failure_time > 0:
-                remaining = self._config.recovery_timeout_seconds - (
-                    now - self._last_failure_time
-                )
+                remaining = self._config.recovery_timeout_seconds - (now - self._last_failure_time)
                 recovery_remaining = round(max(0.0, remaining), 1)
 
             return {
@@ -191,7 +186,9 @@ class CircuitBreakerRegistry:
         with self._lock:
             if provider not in self._breakers:
                 self._breakers[provider] = CircuitBreaker(
-                    provider, self._default_config, on_open=self._on_open,
+                    provider,
+                    self._default_config,
+                    on_open=self._on_open,
                 )
             return self._breakers[provider]
 

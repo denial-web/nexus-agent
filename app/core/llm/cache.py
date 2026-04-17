@@ -61,7 +61,10 @@ class LLMResponseCache:
         return self._config.enabled
 
     def get(
-        self, prompt: str, model_id: str | None, system_prompt: str | None,
+        self,
+        prompt: str,
+        model_id: str | None,
+        system_prompt: str | None,
     ) -> LLMResponse | None:
         if not self._config.enabled:
             return None
@@ -114,7 +117,10 @@ class LLMResponseCache:
                 self._evictions += 1
 
     def invalidate(
-        self, prompt: str, model_id: str | None, system_prompt: str | None,
+        self,
+        prompt: str,
+        model_id: str | None,
+        system_prompt: str | None,
     ) -> bool:
         if not self._config.enabled:
             return False
