@@ -10,6 +10,7 @@ class LLMResponse:
     latency_ms: float
     provider: str  # "gemini", "openai", "mock"
     raw_response: dict[str, Any] | None = None
+    request_id: str | None = None
 
 
 @dataclass

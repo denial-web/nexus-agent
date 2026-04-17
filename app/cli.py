@@ -48,7 +48,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def _run_agent_prompt(prompt: str) -> int:
-    url = f"{_base_url()}/api/agent/agent/run"
+    url = f"{_base_url()}/v1/agent/agent/run"
     body: dict[str, Any] = {"prompt": prompt}
     try:
         r = httpx.post(url, json=body, headers=_headers(), timeout=600.0)
@@ -62,7 +62,7 @@ def _run_agent_prompt(prompt: str) -> int:
 
 
 def cmd_feedback(args: argparse.Namespace) -> int:
-    url = f"{_base_url()}/api/agent/agent/feedback"
+    url = f"{_base_url()}/v1/agent/agent/feedback"
     try:
         r = httpx.post(
             url,
@@ -79,7 +79,7 @@ def cmd_feedback(args: argparse.Namespace) -> int:
 
 
 def cmd_approve(args: argparse.Namespace) -> int:
-    url = f"{_base_url()}/api/governance/approve/{args.request_id}"
+    url = f"{_base_url()}/v1/governance/approve/{args.request_id}"
     body: dict[str, Any] = {"approver_id": args.approver or "cli-user", "decision": "approve"}
     try:
         r = httpx.post(url, json=body, headers=_headers(), timeout=60.0)
@@ -92,7 +92,7 @@ def cmd_approve(args: argparse.Namespace) -> int:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    url = f"{_base_url()}/api/agent/agent/resume"
+    url = f"{_base_url()}/v1/agent/agent/resume"
     try:
         r = httpx.post(url, json={"trace_id": args.trace_id}, headers=_headers(), timeout=600.0)
         r.raise_for_status()
@@ -104,7 +104,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 
 def cmd_status(_args: argparse.Namespace) -> int:
-    url = f"{_base_url()}/api/governance/approvals"
+    url = f"{_base_url()}/v1/governance/approvals"
     try:
         r = httpx.get(url, headers=_headers(), timeout=30.0)
         r.raise_for_status()
@@ -124,7 +124,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 def cmd_skills_list(args: argparse.Namespace) -> int:
     params = "?enabled_only=false" if args.all else "?enabled_only=true"
-    url = f"{_base_url()}/api/skills{params}"
+    url = f"{_base_url()}/v1/skills{params}"
     try:
         r = httpx.get(url, headers=_headers(), timeout=30.0)
         r.raise_for_status()
@@ -148,7 +148,7 @@ def cmd_skills_list(args: argparse.Namespace) -> int:
 
 
 def cmd_skills_execute(args: argparse.Namespace) -> int:
-    url = f"{_base_url()}/api/skills/{args.skill_id}/execute"
+    url = f"{_base_url()}/v1/skills/{args.skill_id}/execute"
     try:
         r = httpx.post(url, headers=_headers(), timeout=600.0)
         r.raise_for_status()
@@ -268,7 +268,7 @@ def cmd_mcp_serve(_args: argparse.Namespace) -> int:
 
 
 def cmd_mcp_backends(_args: argparse.Namespace) -> int:
-    url = f"{_base_url()}/api/mcp/backends"
+    url = f"{_base_url()}/v1/mcp/backends"
     try:
         r = httpx.get(url, headers=_headers(), timeout=30.0)
         r.raise_for_status()
@@ -280,7 +280,7 @@ def cmd_mcp_backends(_args: argparse.Namespace) -> int:
 
 
 def cmd_mcp_add(args: argparse.Namespace) -> int:
-    url = f"{_base_url()}/api/mcp/backends"
+    url = f"{_base_url()}/v1/mcp/backends"
     body = {
         "name": args.name,
         "url": args.backend_url,
@@ -302,7 +302,7 @@ def cmd_mcp_add(args: argparse.Namespace) -> int:
 
 def cmd_skills_toggle(args: argparse.Namespace) -> int:
     enabled = args.state.lower() in ("on", "true", "enable", "1")
-    url = f"{_base_url()}/api/skills/{args.skill_id}"
+    url = f"{_base_url()}/v1/skills/{args.skill_id}"
     try:
         r = httpx.patch(url, json={"enabled": enabled}, headers=_headers(), timeout=30.0)
         r.raise_for_status()

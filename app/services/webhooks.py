@@ -22,6 +22,7 @@ import hashlib
 import hmac
 import json
 import logging
+import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -37,10 +38,7 @@ logger = logging.getLogger(__name__)
 _pool: ThreadPoolExecutor | None = None
 _pool_lock = threading.Lock()
 
-_MAX_RETRIES = 3
-_RETRY_BACKOFF_BASE = 1.0
-_REQUEST_TIMEOUT = 10.0
-_MAX_CONSECUTIVE_FAILURES = 10
+_RETRYABLE_STATUS_CODES = frozenset(range(500, 600)) | {408, 429}
 
 
 class WebhookEvent(StrEnum):
@@ -72,11 +70,41 @@ def _get_pool() -> ThreadPoolExecutor:
         return _pool
 
 
-def shutdown_pool() -> None:
+def shutdown_pool(wait: bool = False, timeout: float | None = None) -> None:
+    """Shut down the dispatcher thread pool.
+
+    Pass wait=True to block until in-flight deliveries complete — useful in
+    tests so background threads don't outlive pytest's stdout/stderr capture
+    and emit spurious "I/O operation on closed file" tracebacks.
+    """
     global _pool
-    if _pool is not None:
-        _pool.shutdown(wait=False)
-        _pool = None
+    if _pool is None:
+        return
+    pool = _pool
+    _pool = None
+    try:
+        if wait and timeout is not None:
+            try:
+                pool.shutdown(wait=True, cancel_futures=True)
+            except TypeError:
+                pool.shutdown(wait=True)
+        else:
+            pool.shutdown(wait=wait)
+    except Exception:
+        pass
+
+
+def _safe_log_exception(msg: str, *args: Any) -> None:
+    """Log an exception, swallowing errors if stdout/stderr is already closed.
+
+    Webhook dispatch runs on a background thread pool; during process shutdown
+    (or pytest teardown) the logger's stream may be closed before the worker
+    finishes, which would otherwise surface as noisy unhandled tracebacks.
+    """
+    try:
+        logger.exception(msg, *args)
+    except (ValueError, OSError):
+        pass
 
 
 def _sign_payload(payload_bytes: bytes, secret: str) -> str:
@@ -85,15 +113,46 @@ def _sign_payload(payload_bytes: bytes, secret: str) -> str:
     ).hexdigest()
 
 
+def compute_backoff(
+    attempt: int,
+    base: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    """Compute exponential backoff delay with full jitter.
+
+    delay = random(0, min(max_backoff, base * 2^attempt))
+
+    Full jitter avoids thundering-herd effects when many webhooks
+    retry simultaneously after a downstream outage.
+    """
+    if base is None:
+        base = settings.WEBHOOK_BACKOFF_BASE
+    if maximum is None:
+        maximum = settings.WEBHOOK_BACKOFF_MAX
+    exp_delay = min(maximum, base * (2 ** attempt))
+    return random.uniform(0, exp_delay)
+
+
+def _is_retryable_status(status: int) -> bool:
+    return status in _RETRYABLE_STATUS_CODES
+
+
 def _deliver(
     url: str,
     payload: WebhookPayload,
     secret: str | None,
     webhook_id: str,
 ) -> bool:
-    """Deliver a webhook with retries. Returns True on success."""
+    """Deliver a webhook with exponential backoff + jitter retries.
+
+    Retries on connection errors and retryable HTTP status codes
+    (5xx, 408, 429). Non-retryable 4xx responses fail immediately.
+    """
     import urllib.error
     import urllib.request
+
+    max_retries = settings.WEBHOOK_MAX_RETRIES
+    timeout = settings.WEBHOOK_REQUEST_TIMEOUT
 
     body = json.dumps(
         {"event": payload.event, "timestamp": payload.timestamp, "data": payload.data},
@@ -105,10 +164,11 @@ def _deliver(
         sig = _sign_payload(body, secret)
         headers["X-Nexus-Signature-256"] = f"sha256={sig}"
 
-    for attempt in range(_MAX_RETRIES):
+    last_error = ""
+    for attempt in range(max_retries):
         try:
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 status = resp.status
                 if 200 <= status < 300:
                     logger.info(
@@ -116,22 +176,32 @@ def _deliver(
                         webhook_id, payload.event, url, status,
                     )
                     return True
+
+                last_error = f"HTTP {status}"
+                if not _is_retryable_status(status):
+                    logger.warning(
+                        "Webhook %s non-retryable status: event=%s url=%s status=%d",
+                        webhook_id, payload.event, url, status,
+                    )
+                    _record_failure(webhook_id, last_error)
+                    return False
+
                 logger.warning(
-                    "Webhook %s non-2xx: event=%s url=%s status=%d (attempt %d/%d)",
-                    webhook_id, payload.event, url, status, attempt + 1, _MAX_RETRIES,
+                    "Webhook %s retryable status: event=%s url=%s status=%d (attempt %d/%d)",
+                    webhook_id, payload.event, url, status, attempt + 1, max_retries,
                 )
         except Exception as exc:
+            last_error = str(exc)
             logger.warning(
                 "Webhook %s failed: event=%s url=%s error=%s (attempt %d/%d)",
-                webhook_id, payload.event, url, exc, attempt + 1, _MAX_RETRIES,
+                webhook_id, payload.event, url, exc, attempt + 1, max_retries,
             )
-            if attempt < _MAX_RETRIES - 1:
-                time.sleep(_RETRY_BACKOFF_BASE * (2 ** attempt))
-                continue
-            _record_failure(webhook_id, str(exc))
-            return False
 
-    _record_failure(webhook_id, "Max retries exceeded")
+        if attempt < max_retries - 1:
+            delay = compute_backoff(attempt)
+            time.sleep(delay)
+
+    _record_failure(webhook_id, last_error or "Max retries exceeded")
     return False
 
 
@@ -147,7 +217,8 @@ def _record_failure(webhook_id: str, error: str) -> None:
             if wh:
                 wh.failure_count = (wh.failure_count or 0) + 1
                 wh.last_error = error
-                if wh.failure_count >= _MAX_CONSECUTIVE_FAILURES:
+                max_failures = settings.WEBHOOK_MAX_CONSECUTIVE_FAILURES
+                if wh.failure_count >= max_failures:
                     wh.enabled = False
                     logger.warning(
                         "Webhook %s auto-disabled after %d consecutive failures",
@@ -157,7 +228,7 @@ def _record_failure(webhook_id: str, error: str) -> None:
         finally:
             session.close()
     except Exception:
-        logger.exception("Failed to record webhook failure for %s", webhook_id)
+        _safe_log_exception("Failed to record webhook failure for %s", webhook_id)
 
 
 def _record_success(webhook_id: str) -> None:
@@ -177,7 +248,7 @@ def _record_success(webhook_id: str) -> None:
         finally:
             session.close()
     except Exception:
-        logger.exception("Failed to record webhook success for %s", webhook_id)
+        _safe_log_exception("Failed to record webhook success for %s", webhook_id)
 
 
 def _dispatch_one(

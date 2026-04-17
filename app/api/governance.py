@@ -8,9 +8,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.sanitize import sanitize_for_error
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/governance", tags=["Governance"])
+router = APIRouter(prefix="/governance", tags=["Governance"])
 
 
 class PolicyCreate(BaseModel):
@@ -67,7 +68,7 @@ def create_policy(req: PolicyCreate, db: Session = Depends(get_db)) -> dict:
 
     existing = db.query(Policy).filter_by(name=req.name).first()
     if existing:
-        raise HTTPException(status_code=409, detail=f"Policy with name '{req.name}' already exists")
+        raise HTTPException(status_code=409, detail=f"Policy with name {sanitize_for_error(req.name)} already exists")
 
     policy = Policy(
         name=req.name,

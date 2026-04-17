@@ -1,17 +1,19 @@
 """Trace replay and audit log endpoints."""
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.responses import Response
 
 from app.db import get_db
 from app.models.trace import Trace
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/traces", tags=["Traces"])
+router = APIRouter(prefix="/traces", tags=["Traces"])
 
 
 class TraceSummary(BaseModel):
@@ -224,3 +226,54 @@ def _trace_detail(trace: Trace) -> dict:
         "governance_token_id": trace.governance_token_id,
         "created_at": trace.created_at.isoformat() if trace.created_at else None,
     }
+
+
+@router.get("/audit/events")
+def list_audit_event_types() -> dict:
+    """List available audit event types for filtering."""
+    from app.services.audit_export import get_event_types
+
+    return {"event_types": get_event_types()}
+
+
+@router.get("/audit/export")
+def export_audit_logs(
+    event_type: list[str] | None = Query(None),
+    since: datetime | None = None,
+    until: datetime | None = None,
+    status: str | None = None,
+    limit: int = Query(1000, le=10000),
+    offset: int = Query(0, ge=0),
+    format: str = Query("jsonl"),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Export audit logs in SIEM-compatible JSON-lines format.
+
+    Supports filtering by event type, time range, status, and pagination.
+    Returns application/x-ndjson (JSON-lines) by default, or JSON array.
+    """
+    from app.services.audit_export import export_audit_logs as do_export
+    from app.services.audit_export import records_to_jsonl
+
+    records = do_export(
+        db,
+        event_types=event_type,
+        since=since,
+        until=until,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+    if format == "json":
+        import json
+
+        body = json.dumps({"total": len(records), "records": records}, default=str)
+        return Response(content=body, media_type="application/json")
+
+    body = records_to_jsonl(records)
+    return Response(
+        content=body,
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": "attachment; filename=audit-export.jsonl"},
+    )

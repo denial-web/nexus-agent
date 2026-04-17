@@ -9,13 +9,29 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     DATABASE_URL: str = "sqlite:///./nexus.db"
 
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+    DB_POOL_RECYCLE: int = 1800  # seconds; 0 = disabled
+    DB_POOL_PRE_PING: bool = True
+    DB_POOL_TIMEOUT: int = 30  # seconds to wait for a connection from pool
+
     NEXUS_API_KEY: str = ""
     RATE_LIMIT_RPM: int = 30
     MAX_PROMPT_LENGTH: int = 50_000
+    MAX_REQUEST_BODY_BYTES: int = 10_485_760  # 10 MB
+    REQUEST_TIMEOUT_SECONDS: float = 120.0
+    SHUTDOWN_DRAIN_SECONDS: float = 30.0
+
+    # Legacy /api/ route deprecation (RFC 8594); empty = no Sunset header
+    API_LEGACY_SUNSET: str = ""  # ISO date, e.g. "2026-12-31"
 
     # Comma-separated origins; empty = CORS middleware not installed (same-origin only)
     CORS_ORIGINS: str = ""
+    CORS_ALLOW_METHODS: str = "GET,POST,PUT,DELETE,OPTIONS"
+    CORS_ALLOW_HEADERS: str = "Content-Type,X-API-Key,X-Request-ID,Authorization"
+    CORS_MAX_AGE: int = 600  # preflight cache seconds
     EXPOSE_METRICS: bool = False
+    HEALTH_PROBE_TIMEOUT: float = 5.0  # per-provider deep-check timeout in seconds
 
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
@@ -104,8 +120,17 @@ class Settings(BaseSettings):
     # Webhooks
     WEBHOOKS_ENABLED: bool = False
     WEBHOOK_WORKERS: int = 2
+    WEBHOOK_MAX_RETRIES: int = 3
+    WEBHOOK_BACKOFF_BASE: float = 1.0
+    WEBHOOK_BACKOFF_MAX: float = 30.0
+    WEBHOOK_REQUEST_TIMEOUT: float = 10.0
+    WEBHOOK_MAX_CONSECUTIVE_FAILURES: int = 10
 
-    # Redis (multi-worker rate limiting, future caching)
+    # Idempotency key support
+    IDEMPOTENCY_TTL: int = 86400  # seconds; cached response lifetime
+    IDEMPOTENCY_MAX_KEYS: int = 10000  # max keys in in-process store
+
+    # Redis (multi-worker rate limiting, idempotency store)
     REDIS_URL: str = ""
 
     # OpenTelemetry distributed tracing

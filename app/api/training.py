@@ -7,9 +7,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.sanitize import sanitize_for_error
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/training", tags=["Training"])
+router = APIRouter(prefix="/training", tags=["Training"])
 
 
 class LabelRequest(BaseModel):
@@ -242,7 +243,7 @@ def promote_adapter_endpoint(req: PromoteAdapterRequest, db: Session = Depends(g
     if job_status not in ("succeeded", "completed", "success"):
         raise HTTPException(
             status_code=400,
-            detail=f"Job not in a promotable state: {job_status or 'unknown'}",
+            detail=f"Job not in a promotable state: {sanitize_for_error(job_status or 'unknown')}",
         )
 
     adapter = status.get("adapter_path") or status.get("lora_adapter_path") or status.get("output_path")

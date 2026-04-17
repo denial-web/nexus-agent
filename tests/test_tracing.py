@@ -410,7 +410,7 @@ class TestHealthEndpoints:
         assert data["status"] == "ready"
         assert "uptime_seconds" in data
         checks = data["checks"]
-        assert checks["database"] == "connected"
+        assert checks["database"]["status"] == "connected"
         assert isinstance(checks["llm_providers"], int)
         assert isinstance(checks["llm_provider_names"], list)
         assert "circuit_breakers" in checks
@@ -429,7 +429,7 @@ class TestHealthEndpoints:
             resp = client.get("/health/ready")
         assert resp.status_code == 503
         assert resp.json()["status"] == "degraded"
-        assert resp.json()["checks"]["database"] == "unreachable"
+        assert resp.json()["checks"]["database"]["status"] == "unreachable"
 
 
 class TestTracingAPI:

@@ -138,25 +138,27 @@ class TestMetricsAuth:
 class TestProductionConfig:
     def test_prod_requires_api_key(self, monkeypatch):
         monkeypatch.setattr(settings, "NEXUS_API_KEY", "")
+        monkeypatch.setattr(settings, "SESSION_SECRET", "test-secret")
         monkeypatch.setattr(settings, "ENVIRONMENT", "production")
-        from app.main import _validate_production_config
+        from app.main import _validate_startup_config
 
-        with pytest.raises(RuntimeError, match="NEXUS_API_KEY must be set"):
-            _validate_production_config()
+        with pytest.raises(RuntimeError, match="NEXUS_API_KEY"):
+            _validate_startup_config()
 
     def test_prod_ok_with_api_key(self, monkeypatch):
         monkeypatch.setattr(settings, "NEXUS_API_KEY", "my-secret")
+        monkeypatch.setattr(settings, "SESSION_SECRET", "test-secret")
         monkeypatch.setattr(settings, "ENVIRONMENT", "production")
-        from app.main import _validate_production_config
+        from app.main import _validate_startup_config
 
-        _validate_production_config()
+        _validate_startup_config()
 
     def test_dev_allows_empty_api_key(self, monkeypatch):
         monkeypatch.setattr(settings, "NEXUS_API_KEY", "")
         monkeypatch.setattr(settings, "ENVIRONMENT", "development")
-        from app.main import _validate_production_config
+        from app.main import _validate_startup_config
 
-        _validate_production_config()
+        _validate_startup_config()
 
 
 class TestSafeKeyCompare:
@@ -244,3 +246,271 @@ class TestRateLimitMiddleware:
         client.post("/dashboard/login", data={"api_key": "wrong2"})
         resp = client.post("/dashboard/login", data={"api_key": "wrong3"})
         assert resp.status_code == 429
+
+
+class TestKeyRotation:
+    """API key rotation: comma-separated keys, primary vs secondary."""
+
+    def test_parse_single_key(self):
+        from app.middleware import _parse_api_keys
+
+        with patch.object(settings, "NEXUS_API_KEY", "key-one"):
+            assert _parse_api_keys() == ["key-one"]
+
+    def test_parse_multiple_keys(self):
+        from app.middleware import _parse_api_keys
+
+        with patch.object(settings, "NEXUS_API_KEY", "primary,secondary,third"):
+            assert _parse_api_keys() == ["primary", "secondary", "third"]
+
+    def test_parse_strips_whitespace(self):
+        from app.middleware import _parse_api_keys
+
+        with patch.object(settings, "NEXUS_API_KEY", " primary , secondary "):
+            assert _parse_api_keys() == ["primary", "secondary"]
+
+    def test_parse_empty(self):
+        from app.middleware import _parse_api_keys
+
+        with patch.object(settings, "NEXUS_API_KEY", ""):
+            assert _parse_api_keys() == []
+
+    def test_check_primary_key(self):
+        from app.middleware import check_api_key
+
+        with patch.object(settings, "NEXUS_API_KEY", "primary,secondary"):
+            valid, is_primary = check_api_key("primary")
+            assert valid is True
+            assert is_primary is True
+
+    def test_check_secondary_key(self):
+        from app.middleware import check_api_key
+
+        with patch.object(settings, "NEXUS_API_KEY", "primary,secondary"):
+            valid, is_primary = check_api_key("secondary")
+            assert valid is True
+            assert is_primary is False
+
+    def test_check_invalid_key(self):
+        from app.middleware import check_api_key
+
+        with patch.object(settings, "NEXUS_API_KEY", "primary,secondary"):
+            valid, is_primary = check_api_key("wrong")
+            assert valid is False
+
+    def test_check_single_key_is_primary(self):
+        from app.middleware import check_api_key
+
+        with patch.object(settings, "NEXUS_API_KEY", "only-key"):
+            valid, is_primary = check_api_key("only-key")
+            assert valid is True
+            assert is_primary is True
+
+    def test_primary_key_no_deprecation_header(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "new-key,old-key")
+        resp = client.get("/v1/traces", headers={"X-API-Key": "new-key"})
+        assert resp.status_code == 200
+        assert "X-API-Key-Deprecated" not in resp.headers
+
+    def test_secondary_key_gets_deprecation_header(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "new-key,old-key")
+        resp = client.get("/v1/traces", headers={"X-API-Key": "old-key"})
+        assert resp.status_code == 200
+        assert resp.headers.get("X-API-Key-Deprecated") == "true"
+
+    def test_wrong_key_rejected_with_multi_keys(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "new-key,old-key")
+        resp = client.get("/v1/traces", headers={"X-API-Key": "neither"})
+        assert resp.status_code == 401
+
+    def test_dashboard_login_accepts_any_key(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "new-key,old-key")
+        resp = client.post(
+            "/dashboard/login",
+            data={"api_key": "old-key"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+    def test_dashboard_login_rejects_invalid(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "new-key,old-key")
+        resp = client.post(
+            "/dashboard/login",
+            data={"api_key": "wrong"},
+        )
+        assert resp.status_code == 403
+
+    def test_three_key_rotation(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "NEXUS_API_KEY", "newest,current,oldest")
+        r1 = client.get("/v1/traces", headers={"X-API-Key": "newest"})
+        assert r1.status_code == 200
+        assert "X-API-Key-Deprecated" not in r1.headers
+
+        r2 = client.get("/v1/traces", headers={"X-API-Key": "current"})
+        assert r2.status_code == 200
+        assert r2.headers.get("X-API-Key-Deprecated") == "true"
+
+        r3 = client.get("/v1/traces", headers={"X-API-Key": "oldest"})
+        assert r3.status_code == 200
+        assert r3.headers.get("X-API-Key-Deprecated") == "true"
+
+
+class TestBodySizeLimitMiddleware:
+    """Request body size limit enforcement."""
+
+    def test_small_body_allowed(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "MAX_REQUEST_BODY_BYTES", 1_000_000)
+        resp = client.post("/v1/agent/run", json={"prompt": "hello"})
+        assert resp.status_code == 200
+
+    def test_oversized_content_length_rejected(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "MAX_REQUEST_BODY_BYTES", 100)
+        resp = client.post(
+            "/v1/agent/run",
+            json={"prompt": "x" * 200},
+        )
+        assert resp.status_code == 413
+        data = resp.json()
+        assert data["error"]["code"] == "payload_too_large"
+        assert "limit" in data["error"]["message"].lower()
+
+    def test_disabled_when_zero(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "MAX_REQUEST_BODY_BYTES", 0)
+        resp = client.post(
+            "/v1/agent/run",
+            json={"prompt": "x" * 10_000},
+        )
+        assert resp.status_code == 200
+
+    def test_health_not_affected(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "MAX_REQUEST_BODY_BYTES", 1)
+        resp = client.get("/health")
+        assert resp.status_code == 200
+
+    def test_get_requests_pass_through(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "MAX_REQUEST_BODY_BYTES", 1)
+        resp = client.get("/v1/traces")
+        assert resp.status_code == 200
+
+    def test_error_has_backward_compat_detail(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "MAX_REQUEST_BODY_BYTES", 50)
+        resp = client.post("/v1/agent/run", json={"prompt": "x" * 200})
+        assert resp.status_code == 413
+        data = resp.json()
+        assert "detail" in data
+
+
+class TestSecurityHeaders:
+    """Verify security headers on API and dashboard responses."""
+
+    def test_api_has_baseline_headers(self, client):
+        resp = client.get("/v1/traces")
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["X-Frame-Options"] == "DENY"
+        assert resp.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+        assert resp.headers["X-Permitted-Cross-Domain-Policies"] == "none"
+
+    def test_api_has_permissions_policy(self, client):
+        resp = client.get("/v1/traces")
+        pp = resp.headers["Permissions-Policy"]
+        assert "camera=()" in pp
+        assert "microphone=()" in pp
+        assert "geolocation=()" in pp
+
+    def test_api_csp_minimal(self, client):
+        resp = client.get("/v1/traces")
+        csp = resp.headers["Content-Security-Policy"]
+        assert "default-src 'none'" in csp
+        assert "frame-ancestors 'none'" in csp
+        assert "script-src" not in csp
+
+    def test_dashboard_csp_allows_styles_and_fonts(self, client):
+        resp = client.get("/dashboard")
+        csp = resp.headers["Content-Security-Policy"]
+        assert "style-src" in csp
+        assert "fonts.googleapis.com" in csp
+        assert "fonts.gstatic.com" in csp
+        assert "script-src 'none'" in csp
+
+    def test_dashboard_csp_blocks_scripts(self, client):
+        resp = client.get("/dashboard")
+        csp = resp.headers["Content-Security-Policy"]
+        assert "script-src 'none'" in csp
+
+    def test_dashboard_csp_form_action_self(self, client):
+        resp = client.get("/dashboard")
+        csp = resp.headers["Content-Security-Policy"]
+        assert "form-action 'self'" in csp
+
+    def test_no_hsts_in_dev(self, client):
+        resp = client.get("/v1/traces")
+        assert "Strict-Transport-Security" not in resp.headers
+
+    def test_hsts_in_production(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+        resp = client.get("/v1/traces")
+        hsts = resp.headers.get("Strict-Transport-Security", "")
+        assert "max-age=" in hsts
+        assert "includeSubDomains" in hsts
+
+    def test_health_endpoint_has_headers(self, client):
+        resp = client.get("/health")
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert "Content-Security-Policy" in resp.headers
+
+    def test_headers_present_on_error(self, client):
+        resp = client.get("/v1/traces/nonexistent-id")
+        assert resp.status_code == 404
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert "Content-Security-Policy" in resp.headers
+
+
+class TestLegacyApiDeprecation:
+    """Verify /api/ legacy routes carry deprecation headers."""
+
+    def test_legacy_route_has_deprecation_header(self, client):
+        resp = client.get("/api/traces")
+        assert resp.headers.get("Deprecation") == "true"
+
+    def test_v1_route_no_deprecation_header(self, client):
+        resp = client.get("/v1/traces")
+        assert "Deprecation" not in resp.headers
+
+    def test_legacy_route_has_link_to_v1(self, client):
+        resp = client.get("/api/traces")
+        link = resp.headers.get("Link", "")
+        assert "/v1/traces" in link
+        assert 'rel="successor-version"' in link
+
+    def test_legacy_post_has_deprecation(self, client):
+        resp = client.post("/api/agent/run", json={"prompt": "hello"})
+        assert resp.headers.get("Deprecation") == "true"
+        link = resp.headers.get("Link", "")
+        assert "/v1/agent/run" in link
+
+    def test_v1_post_no_deprecation(self, client):
+        resp = client.post("/v1/agent/run", json={"prompt": "hello"})
+        assert "Deprecation" not in resp.headers
+
+    def test_sunset_header_when_configured(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "API_LEGACY_SUNSET", "2026-12-31")
+        resp = client.get("/api/traces")
+        assert resp.headers.get("Sunset") == "2026-12-31"
+
+    def test_no_sunset_header_when_empty(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "API_LEGACY_SUNSET", "")
+        resp = client.get("/api/traces")
+        assert "Sunset" not in resp.headers
+
+    def test_health_no_deprecation(self, client):
+        resp = client.get("/health")
+        assert "Deprecation" not in resp.headers
+
+    def test_dashboard_no_deprecation(self, client):
+        resp = client.get("/dashboard")
+        assert "Deprecation" not in resp.headers
+
+    def test_nested_legacy_path_correct_link(self, client):
+        resp = client.get("/api/critic/registry")
+        link = resp.headers.get("Link", "")
+        assert "/v1/critic/registry" in link

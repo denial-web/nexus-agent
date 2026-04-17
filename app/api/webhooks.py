@@ -12,7 +12,7 @@ from app.models.webhook import Webhook
 from app.services.webhooks import WebhookEvent
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
+router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
 
 class WebhookCreate(BaseModel):

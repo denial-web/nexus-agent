@@ -12,7 +12,7 @@ from app.config import settings
 from app.db import get_db
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/skills", tags=["Skills"])
+router = APIRouter(prefix="/skills", tags=["Skills"])
 
 
 class SkillExecuteResponse(BaseModel):

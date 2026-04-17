@@ -1,9 +1,12 @@
 """
 Rate limiter backends: in-process (default) and Redis (multi-worker).
 
-When REDIS_URL is configured, the Redis backend uses a sliding-window
-counter (INCR + EXPIRE) that is shared across all workers/instances.
+When REDIS_URL is configured, the Redis backend uses a sliding-window log
+(sorted set + Lua script) that is shared across all workers/instances.
 Falls back to in-process memory when Redis is unavailable or unconfigured.
+
+Both backends return a ``RateLimitResult`` with ``allowed``, ``remaining``
+count, and ``retry_after`` seconds so callers can set standard headers.
 """
 
 from __future__ import annotations
@@ -12,16 +15,30 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _backend: RateLimiterBackend | None = None
 
 
+@dataclass(frozen=True)
+class RateLimitResult:
+    allowed: bool
+    remaining: int
+    retry_after: int
+    limit: int
+
+
 class RateLimiterBackend(ABC):
     @abstractmethod
+    def check(self, key: str, limit: int, window_seconds: int) -> RateLimitResult:
+        """Check rate limit and return result with remaining quota."""
+
     def is_allowed(self, key: str, limit: int, window_seconds: int) -> bool:
-        """Return True if the request is within the rate limit."""
+        """Legacy convenience — delegates to check()."""
+        return self.check(key, limit, window_seconds).allowed
 
     @abstractmethod
     def reset(self) -> None:
@@ -45,7 +62,7 @@ class InProcessBackend(RateLimiterBackend):
         self._requests: dict[str, list[float]] = defaultdict(list)
         self._last_evict: float = time.time()
 
-    def is_allowed(self, key: str, limit: int, window_seconds: int) -> bool:
+    def check(self, key: str, limit: int, window_seconds: int) -> RateLimitResult:
         now = time.time()
         cutoff = now - window_seconds
         self._evict_stale(now, window_seconds)
@@ -53,11 +70,21 @@ class InProcessBackend(RateLimiterBackend):
         timestamps = self._requests[key]
         self._requests[key] = [t for t in timestamps if t > cutoff]
 
-        if len(self._requests[key]) >= limit:
-            return False
+        current = len(self._requests[key])
+        if current >= limit:
+            oldest = min(self._requests[key]) if self._requests[key] else now
+            retry_after = max(1, int(oldest + window_seconds - now) + 1)
+            return RateLimitResult(
+                allowed=False, remaining=0, retry_after=retry_after, limit=limit,
+            )
 
         self._requests[key].append(now)
-        return True
+        return RateLimitResult(
+            allowed=True,
+            remaining=limit - current - 1,
+            retry_after=0,
+            limit=limit,
+        )
 
     def _evict_stale(self, now: float, window_seconds: int) -> None:
         if now - self._last_evict < self._EVICT_INTERVAL:
@@ -76,16 +103,51 @@ class InProcessBackend(RateLimiterBackend):
         return "in_process"
 
 
-class RedisBackend(RateLimiterBackend):
-    """Sliding-window rate limiter backed by Redis INCR + EXPIRE.
+_SLIDING_WINDOW_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+local cutoff = now - window
 
-    Each rate-limit key maps to a Redis key with a TTL equal to the window.
-    The counter auto-expires so no cleanup is needed.
+redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoff)
+local count = redis.call('ZCARD', key)
+
+if count < limit then
+    redis.call('ZADD', key, now, member)
+    redis.call('EXPIRE', key, window + 1)
+    return {1, limit - count - 1, 0}
+else
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    local retry = 0
+    if #oldest >= 2 then
+        retry = math.ceil(tonumber(oldest[2]) + window - now) + 1
+    end
+    return {0, 0, retry}
+end
+"""
+
+
+class RedisBackend(RateLimiterBackend):
+    """Sliding-window log rate limiter backed by Redis sorted sets.
+
+    Uses a Lua script for atomic check-and-add. Each member is a unique
+    request identifier (timestamp + random) scored by its timestamp.
+    Expired members are pruned on every call. The sorted set TTL is
+    set to window+1 as a safety net.
+
+    Includes automatic reconnection: if a check fails due to a connection
+    error, one reconnect attempt is made before falling back to allow.
     """
+
+    _RECONNECT_COOLDOWN = 5.0
 
     def __init__(self, redis_url: str) -> None:
         self._redis_url = redis_url
-        self._client: _RedisType | None = None
+        self._client: Any = None
+        self._script: Any = None
+        self._last_reconnect: float = 0.0
         self._connect()
 
     def _connect(self) -> None:
@@ -99,26 +161,80 @@ class RedisBackend(RateLimiterBackend):
                 socket_timeout=2,
             )
             self._client.ping()
-            logger.info("Redis rate limiter connected: %s", self._redis_url.split("@")[-1])
+            self._script = self._client.register_script(_SLIDING_WINDOW_LUA)
+            logger.info(
+                "Redis rate limiter connected: %s",
+                self._redis_url.split("@")[-1],
+            )
         except Exception:
-            logger.warning("Redis connection failed; rate limiter will use in-process fallback", exc_info=True)
+            logger.warning(
+                "Redis connection failed; rate limiter will use in-process fallback",
+                exc_info=True,
+            )
             self._client = None
+            self._script = None
 
-    def is_allowed(self, key: str, limit: int, window_seconds: int) -> bool:
+    def _try_reconnect(self) -> bool:
+        now = time.time()
+        if now - self._last_reconnect < self._RECONNECT_COOLDOWN:
+            return False
+        self._last_reconnect = now
+        logger.info("Attempting Redis reconnection for rate limiter")
+        self._connect()
+        return self._client is not None
+
+    def check(self, key: str, limit: int, window_seconds: int) -> RateLimitResult:
         if self._client is None:
-            return True
+            if not self._try_reconnect():
+                return RateLimitResult(
+                    allowed=True, remaining=limit, retry_after=0, limit=limit,
+                )
+
+        import os
 
         redis_key = f"nexus:ratelimit:{key}"
+        now_ms = time.time()
+        member = f"{now_ms}:{os.urandom(4).hex()}"
+
         try:
-            pipe = self._client.pipeline()
-            pipe.incr(redis_key)
-            pipe.expire(redis_key, window_seconds, nx=True)
-            results = pipe.execute()
-            count = results[0]
-            return count <= limit
+            result = self._script(
+                keys=[redis_key],
+                args=[now_ms, window_seconds, limit, member],
+            )
+            allowed = bool(result[0])
+            remaining = int(result[1])
+            retry_after = int(result[2])
+            return RateLimitResult(
+                allowed=allowed,
+                remaining=remaining,
+                retry_after=retry_after,
+                limit=limit,
+            )
         except Exception:
-            logger.warning("Redis rate limit check failed for %s", key, exc_info=True)
-            return True
+            logger.warning(
+                "Redis rate limit check failed for %s; attempting reconnect",
+                key,
+                exc_info=True,
+            )
+            self._client = None
+            self._script = None
+            if self._try_reconnect():
+                try:
+                    result = self._script(
+                        keys=[redis_key],
+                        args=[now_ms, window_seconds, limit, member],
+                    )
+                    return RateLimitResult(
+                        allowed=bool(result[0]),
+                        remaining=int(result[1]),
+                        retry_after=int(result[2]),
+                        limit=limit,
+                    )
+                except Exception:
+                    pass
+            return RateLimitResult(
+                allowed=True, remaining=limit, retry_after=0, limit=limit,
+            )
 
     def reset(self) -> None:
         if self._client is None:
@@ -126,7 +242,9 @@ class RedisBackend(RateLimiterBackend):
         try:
             cursor: int = 0
             while True:
-                cursor, keys = self._client.scan(cursor, match="nexus:ratelimit:*", count=100)
+                cursor, keys = self._client.scan(
+                    cursor, match="nexus:ratelimit:*", count=100,
+                )
                 if keys:
                     self._client.delete(*keys)
                 if cursor == 0:
@@ -149,14 +267,6 @@ class RedisBackend(RateLimiterBackend):
             return False
 
 
-try:
-    import redis as _redis_mod
-
-    _RedisType = _redis_mod.Redis
-except ImportError:
-    _RedisType = object
-
-
 def get_backend() -> RateLimiterBackend:
     """Get or create the rate limiter backend singleton."""
     global _backend
@@ -171,9 +281,14 @@ def get_backend() -> RateLimiterBackend:
             if rb.connected:
                 _backend = rb
                 return _backend
-            logger.warning("Redis not reachable; falling back to in-process rate limiter")
+            logger.warning(
+                "Redis not reachable; falling back to in-process rate limiter",
+            )
         except Exception:
-            logger.warning("Redis backend init failed; using in-process fallback", exc_info=True)
+            logger.warning(
+                "Redis backend init failed; using in-process fallback",
+                exc_info=True,
+            )
 
     _backend = InProcessBackend()
     return _backend

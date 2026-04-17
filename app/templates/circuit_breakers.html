@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Circuit Breakers — Nexus Agent{% endblock %}
+{% block content %}
+<h1>Circuit Breakers</h1>
+
+<div class="stats">
+  <div class="stat">
+    <div class="value">{{ total }}</div>
+    <div class="label">Tracked Providers</div>
+  </div>
+  <div class="stat">
+    <div class="value" style="color: var(--green);">{{ closed_count }}</div>
+    <div class="label">Closed (Healthy)</div>
+  </div>
+  <div class="stat">
+    <div class="value" style="color: {% if open_count > 0 %}var(--red){% else %}var(--text-dim){% endif %};">{{ open_count }}</div>
+    <div class="label">Open (Tripped)</div>
+  </div>
+  <div class="stat">
+    <div class="value" style="color: {% if half_open_count > 0 %}var(--yellow){% else %}var(--text-dim){% endif %};">{{ half_open_count }}</div>
+    <div class="label">Half-Open (Probing)</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ total_failures }}</div>
+    <div class="label">Recent Failures</div>
+  </div>
+</div>
+
+{% if breakers %}
+<div class="cb-grid">
+  {% for b in breakers %}
+  <div class="card cb-card cb-{{ b.state }}">
+    <div class="cb-header">
+      <div class="cb-provider">{{ b.name }}</div>
+      <span class="badge badge-cb-{{ b.state }}">{{ b.state | replace("_", " ") }}</span>
+    </div>
+
+    <div class="cb-meter">
+      <div class="cb-meter-label">
+        <span>Failures</span>
+        <span class="mono">{{ b.recent_failures }} / {{ b.failure_threshold }}</span>
+      </div>
+      <div class="cb-bar">
+        {% set pct = (b.recent_failures / b.failure_threshold * 100) | int %}
+        {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+        <div class="cb-bar-fill {% if b.state == 'open' %}cb-bar-red{% elif pct >= 60 %}cb-bar-yellow{% else %}cb-bar-green{% endif %}" style="width: {{ pct }}%;"></div>
+      </div>
+    </div>
+
+    <dl class="cb-details">
+      <dt>Rolling Window</dt>
+      <dd class="mono">{{ b.rolling_window_seconds }}s</dd>
+      <dt>Recovery Timeout</dt>
+      <dd class="mono">{{ b.recovery_timeout_seconds }}s</dd>
+      {% if b.since_last_failure_seconds is not none %}
+      <dt>Since Last Failure</dt>
+      <dd class="mono">{{ b.since_last_failure_seconds }}s</dd>
+      {% endif %}
+      {% if b.recovery_remaining_seconds is not none %}
+      <dt>Recovery In</dt>
+      <dd class="mono" style="color: var(--yellow);">{{ b.recovery_remaining_seconds }}s</dd>
+      {% endif %}
+      {% if b.state == "half_open" %}
+      <dt>Probe Successes</dt>
+      <dd class="mono">{{ b.half_open_successes }}</dd>
+      {% endif %}
+    </dl>
+
+    {% if b.state != "closed" %}
+    <form method="post" action="/dashboard/circuit-breakers/{{ b.name }}/reset" class="cb-actions">
+      {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
+      <button type="submit" class="btn btn-sm btn-primary">Reset to Closed</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty">No circuit breakers registered yet. Breakers are created when LLM providers are first used.</div>
+{% endif %}
+{% endblock %}

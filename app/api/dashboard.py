@@ -20,6 +20,7 @@ from app.models.approval_log import ApprovalRequest
 from app.models.labeling_queue import LabelingItem
 from app.models.skill import Skill
 from app.models.trace import Trace
+from app.sanitize import sanitize_for_log
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +72,14 @@ def login_page(request: Request) -> Response:
 @router.post("/login")
 def login_submit(request: Request, api_key: str = Form(...)) -> Response:
     """Validate API key and set session flag."""
-    from app.middleware import _safe_key_compare
+    from app.middleware import _parse_api_keys, check_api_key
 
-    expected = settings.NEXUS_API_KEY.strip()
-    if not expected or _safe_key_compare(api_key, expected):
+    keys = _parse_api_keys()
+    if not keys:
+        request.session["dashboard_authed"] = True
+        return RedirectResponse(url="/dashboard", status_code=303)
+    valid, _is_primary = check_api_key(api_key)
+    if valid:
         request.session["dashboard_authed"] = True
         return RedirectResponse(url="/dashboard", status_code=303)
     return templates.TemplateResponse(request, "login.html", {"error": "Invalid API key"}, status_code=403)
@@ -269,6 +274,87 @@ def calibration_dashboard(request: Request) -> Response:
     )
 
 
+@router.get("/circuit-breakers", response_class=HTMLResponse)
+def circuit_breakers_dashboard(request: Request) -> Response:
+    from app.core.llm.circuit_breaker import get_registry
+
+    breakers = get_registry().get_all_status()
+    total = len(breakers)
+    open_count = sum(1 for b in breakers if b["state"] == "open")
+    half_open_count = sum(1 for b in breakers if b["state"] == "half_open")
+    closed_count = total - open_count - half_open_count
+    total_failures = sum(b["recent_failures"] for b in breakers)
+
+    csrf_token = _issue_csrf(request)
+    return templates.TemplateResponse(
+        request,
+        "circuit_breakers.html",
+        {
+            "active": "circuit_breakers",
+            "breakers": breakers,
+            "total": total,
+            "open_count": open_count,
+            "half_open_count": half_open_count,
+            "closed_count": closed_count,
+            "total_failures": total_failures,
+            "csrf_token": csrf_token,
+        },
+    )
+
+
+@router.post("/circuit-breakers/{provider}/reset")
+def circuit_breaker_reset(
+    provider: str,
+    request: Request,
+    csrf_token: str | None = Form(None),
+) -> Response:
+    if not _csrf_valid(request, csrf_token):
+        return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
+
+    from app.core.llm.circuit_breaker import get_registry
+
+    registry = get_registry()
+    all_names = [b["name"] for b in registry.get_all_status()]
+    if provider not in all_names:
+        safe_name = html_mod.escape(provider)
+        return HTMLResponse(
+            f'<h1>Not found</h1><p>Provider &ldquo;{safe_name}&rdquo; not found.</p>'
+            '<p><a href="/dashboard/circuit-breakers">Back</a></p>',
+            status_code=404,
+        )
+    registry.get(provider).reset()
+    return RedirectResponse(url="/dashboard/circuit-breakers", status_code=303)
+
+
+@router.get("/providers", response_class=HTMLResponse)
+def providers_dashboard(request: Request, probe: bool = False) -> Response:
+    from app.services.provider_health import get_provider_health
+
+    providers = get_provider_health(
+        run_probes=probe, probe_timeout=settings.HEALTH_PROBE_TIMEOUT,
+    )
+    configured_count = sum(1 for p in providers if p["configured"])
+    healthy_count = sum(1 for p in providers if p["overall_status"] == "healthy")
+    degraded_count = sum(1 for p in providers if p["overall_status"] == "degraded")
+    down_count = sum(1 for p in providers if p["overall_status"] == "down")
+
+    csrf_token = _issue_csrf(request)
+    return templates.TemplateResponse(
+        request,
+        "providers.html",
+        {
+            "active": "providers",
+            "providers": providers,
+            "configured_count": configured_count,
+            "healthy_count": healthy_count,
+            "degraded_count": degraded_count,
+            "down_count": down_count,
+            "probed": probe,
+            "csrf_token": csrf_token,
+        },
+    )
+
+
 @router.post("/skills/import")
 def skills_import_dashboard(
     request: Request,
@@ -393,6 +479,6 @@ def toggle_skill_dashboard(
     if skill.enabled:
         skill.flagged = False
     db.commit()
-    logger.info("Dashboard toggled skill '%s' enabled=%s", skill.name, skill.enabled)
+    logger.info("Dashboard toggled skill '%s' enabled=%s", sanitize_for_log(skill.name), skill.enabled)
 
     return RedirectResponse(url=f"/dashboard/skills/{skill_id}", status_code=303)

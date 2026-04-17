@@ -8,9 +8,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.sanitize import sanitize_for_error
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/critic", tags=["Critic"])
+router = APIRouter(prefix="/critic", tags=["Critic"])
 
 
 class CriticNodeCreate(BaseModel):
@@ -68,7 +69,7 @@ def create_critic_node(req: CriticNodeCreate, db: Session = Depends(get_db)) -> 
 
     existing = db.query(CriticNode).filter_by(name=req.name).first()
     if existing:
-        raise HTTPException(status_code=409, detail=f"Node '{req.name}' already exists")
+        raise HTTPException(status_code=409, detail=f"Node {sanitize_for_error(req.name)} already exists")
 
     node = CriticNode(
         name=req.name,

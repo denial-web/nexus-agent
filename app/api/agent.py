@@ -3,6 +3,8 @@
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,9 +14,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
+from app.errors import NexusAPIError
+
+_timeout_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pipeline-timeout")
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/agent", tags=["Agent"])
+router = APIRouter(prefix="/agent", tags=["Agent"])
 
 
 class RunRequest(BaseModel):
@@ -111,12 +116,18 @@ def run_agent(req: RunRequest, db: Session = Depends(get_db)) -> dict:
             detail=f"Prompt exceeds maximum length of {max_len} characters",
         )
 
-    result = run(
-        prompt=req.prompt,
-        session_id=req.session_id,
-        model_id=req.model_id,
-        db_session=db,
-    )
+    timeout = settings.REQUEST_TIMEOUT_SECONDS
+    try:
+        future = _timeout_pool.submit(
+            run, prompt=req.prompt, session_id=req.session_id,
+            model_id=req.model_id, db_session=db,
+        )
+        result = future.result(timeout=timeout if timeout > 0 else None)
+    except FuturesTimeoutError:
+        raise NexusAPIError(
+            504, "request_timeout",
+            f"Pipeline did not complete within {timeout}s timeout",
+        ) from None
 
     payload = {
         "trace_id": result.trace_id,
@@ -155,14 +166,19 @@ def run_agentic(req: AgentRunRequest, db: Session = Depends(get_db)) -> dict:
             detail=f"Prompt exceeds maximum length of {max_len} characters",
         )
 
-    r = run_agent(
-        prompt=req.prompt,
-        session_id=req.session_id,
-        model_id=req.model_id,
-        db_session=db,
-        user_feedback=req.user_feedback,
-        resume_state=req.resume_state,
-    )
+    timeout = settings.REQUEST_TIMEOUT_SECONDS
+    try:
+        future = _timeout_pool.submit(
+            run_agent, prompt=req.prompt, session_id=req.session_id,
+            model_id=req.model_id, db_session=db,
+            user_feedback=req.user_feedback, resume_state=req.resume_state,
+        )
+        r = future.result(timeout=timeout if timeout > 0 else None)
+    except FuturesTimeoutError:
+        raise NexusAPIError(
+            504, "request_timeout",
+            f"Agent loop did not complete within {timeout}s timeout",
+        ) from None
     return {
         "trace_id": r.trace_id,
         "session_id": r.session_id,
@@ -502,6 +518,23 @@ def circuit_breaker_status() -> dict:
     from app.core.llm.circuit_breaker import get_registry
 
     return {"breakers": get_registry().get_all_status()}
+
+
+@router.get("/providers/health")
+def provider_health_status(probe: bool = False) -> dict:
+    """Unified provider health: config + circuit breaker + optional live probe."""
+    from app.services.provider_health import get_provider_health
+
+    providers = get_provider_health(run_probes=probe)
+    return {"providers": providers}
+
+
+@router.get("/version")
+def version_info() -> dict:
+    """Return API version, project version, and build metadata."""
+    from app.version import get_version_info
+
+    return get_version_info()
 
 
 @router.get("/tracing")

@@ -74,6 +74,39 @@ try:
         "nexus_llm_cache_misses_total",
         "LLM response cache misses",
     )
+
+    HTTP_REQUEST_LATENCY = Histogram(
+        "nexus_http_request_duration_seconds",
+        "HTTP request latency",
+        ["method", "path_template", "status_code"],
+        buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    )
+    HTTP_REQUESTS_TOTAL = Counter(
+        "nexus_http_requests_total",
+        "Total HTTP requests",
+        ["method", "status_class"],
+    )
+    HTTP_IN_FLIGHT = Gauge(
+        "nexus_http_in_flight_requests",
+        "Number of HTTP requests currently being processed",
+    )
+    DB_POOL_SIZE = Gauge(
+        "nexus_db_pool_size",
+        "Database connection pool configured size",
+    )
+    DB_POOL_CHECKED_IN = Gauge(
+        "nexus_db_pool_checked_in",
+        "Database connections currently available in pool",
+    )
+    DB_POOL_CHECKED_OUT = Gauge(
+        "nexus_db_pool_checked_out",
+        "Database connections currently in use",
+    )
+    DB_POOL_OVERFLOW = Gauge(
+        "nexus_db_pool_overflow",
+        "Database connections beyond pool size",
+    )
+
     _HAS_PROMETHEUS = True
 
 except ImportError:
@@ -110,6 +143,13 @@ except ImportError:
     CB_FALLBACKS = _noop
     CACHE_HITS = _noop
     CACHE_MISSES = _noop
+    HTTP_REQUEST_LATENCY = _noop
+    HTTP_REQUESTS_TOTAL = _noop
+    HTTP_IN_FLIGHT = _noop
+    DB_POOL_SIZE = _noop
+    DB_POOL_CHECKED_IN = _noop
+    DB_POOL_CHECKED_OUT = _noop
+    DB_POOL_OVERFLOW = _noop
 
     logger.debug("prometheus_client not installed; metrics are no-ops")
 
@@ -135,6 +175,46 @@ def record_critic_scores(scores: dict) -> None:
             CRITIC_SCORES.labels(node=node).observe(score_data.score)
         elif isinstance(score_data, dict) and "score" in score_data:
             CRITIC_SCORES.labels(node=node).observe(score_data["score"])
+
+
+def update_db_pool_gauges() -> None:
+    """Snapshot current DB pool state into Prometheus gauges."""
+    if not _HAS_PROMETHEUS:
+        return
+    try:
+        from app.db import engine
+
+        pool = engine.pool
+        if hasattr(pool, "size"):
+            DB_POOL_SIZE.set(pool.size())
+            DB_POOL_CHECKED_IN.set(pool.checkedin())
+            DB_POOL_CHECKED_OUT.set(pool.checkedout())
+            DB_POOL_OVERFLOW.set(pool.overflow())
+    except Exception:
+        pass
+
+
+_PATH_NORMALIZE_PREFIXES = ("/v1/", "/api/")
+
+
+def normalize_path(path: str) -> str:
+    """Collapse dynamic path segments to reduce metric cardinality.
+
+    /v1/traces/abc123 → /v1/traces/{id}
+    /dashboard/skills/xyz → /dashboard/skills/{id}
+    """
+    for prefix in _PATH_NORMALIZE_PREFIXES:
+        if path.startswith(prefix):
+            rest = path[len(prefix):]
+            parts = rest.split("/")
+            normalized = []
+            for i, part in enumerate(parts):
+                if i > 0 and part and not part.startswith("{"):
+                    normalized.append("{id}")
+                else:
+                    normalized.append(part)
+            return prefix + "/".join(normalized)
+    return path
 
 
 def is_available() -> bool:

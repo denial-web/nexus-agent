@@ -194,7 +194,7 @@ class TestDashboardE2E:
         assert data["status"] == "ready"
         assert "uptime_seconds" in data
         checks = data["checks"]
-        assert checks["database"] == "connected"
+        assert checks["database"]["status"] == "connected"
         assert "llm_providers" in checks
         assert "circuit_breakers" in checks
         assert "tracing" in checks
@@ -206,7 +206,7 @@ class TestDashboardE2E:
             resp = client.get("/health/ready")
         assert resp.status_code == 503
         assert resp.json()["status"] == "degraded"
-        assert resp.json()["checks"]["database"] == "unreachable"
+        assert resp.json()["checks"]["database"]["status"] == "unreachable"
 
     def test_calibration_page_loads(self, client):
         resp = client.get("/dashboard/calibration")

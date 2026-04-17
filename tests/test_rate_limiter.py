@@ -6,11 +6,34 @@ from unittest.mock import MagicMock, patch
 
 from app.services.rate_limiter import (
     InProcessBackend,
+    RateLimitResult,
     RedisBackend,
     get_backend,
     get_status,
     reset_backend,
 )
+
+
+def _make_redis_backend(
+    script_return: list | None = None,
+    script_side_effect: Exception | None = None,
+) -> RedisBackend:
+    """Create a RedisBackend with mocked internals (no real connection)."""
+    mock_redis = MagicMock()
+    mock_script = MagicMock()
+    if script_side_effect:
+        mock_script.side_effect = script_side_effect
+    elif script_return is not None:
+        mock_script.return_value = script_return
+    else:
+        mock_script.return_value = [1, 4, 0]
+
+    backend = RedisBackend.__new__(RedisBackend)
+    backend._client = mock_redis
+    backend._script = mock_script
+    backend._redis_url = "redis://localhost"
+    backend._last_reconnect = 0.0
+    return backend
 
 
 class TestInProcessBackend:
@@ -60,92 +83,116 @@ class TestInProcessBackend:
             self.backend.is_allowed("ip2", 10, 60)
             assert "ip1" not in self.backend._requests
 
+    def test_check_returns_result_with_remaining(self):
+        result = self.backend.check("ip1", 5, 60)
+        assert isinstance(result, RateLimitResult)
+        assert result.allowed is True
+        assert result.remaining == 4
+        assert result.limit == 5
+
+    def test_check_blocked_has_retry_after(self):
+        for _ in range(3):
+            self.backend.check("ip1", 3, 60)
+        result = self.backend.check("ip1", 3, 60)
+        assert result.allowed is False
+        assert result.remaining == 0
+        assert result.retry_after > 0
+
+    def test_remaining_decreases(self):
+        r1 = self.backend.check("ip1", 3, 60)
+        assert r1.remaining == 2
+        r2 = self.backend.check("ip1", 3, 60)
+        assert r2.remaining == 1
+        r3 = self.backend.check("ip1", 3, 60)
+        assert r3.remaining == 0
+        assert r3.allowed is True
+        r4 = self.backend.check("ip1", 3, 60)
+        assert r4.allowed is False
+
 
 class TestRedisBackendMocked:
-    """Test Redis backend with mocked redis client."""
+    """Test Redis backend with mocked Lua script."""
+
+    def test_check_under_limit(self):
+        backend = _make_redis_backend(script_return=[1, 4, 0])
+        result = backend.check("ip1", 5, 60)
+        assert result.allowed is True
+        assert result.remaining == 4
+
+    def test_check_over_limit(self):
+        backend = _make_redis_backend(script_return=[0, 0, 15])
+        result = backend.check("ip1", 5, 60)
+        assert result.allowed is False
+        assert result.remaining == 0
+        assert result.retry_after == 15
 
     def test_is_allowed_under_limit(self):
-        mock_redis = MagicMock()
-        mock_pipe = MagicMock()
-        mock_pipe.execute.return_value = [3, True]
-        mock_redis.pipeline.return_value = mock_pipe
-
-        backend = RedisBackend.__new__(RedisBackend)
-        backend._client = mock_redis
-        backend._redis_url = "redis://localhost"
-
+        backend = _make_redis_backend(script_return=[1, 4, 0])
         assert backend.is_allowed("ip1", 5, 60) is True
-        mock_pipe.incr.assert_called_once_with("nexus:ratelimit:ip1")
-        mock_pipe.expire.assert_called_once_with("nexus:ratelimit:ip1", 60, nx=True)
 
     def test_is_allowed_over_limit(self):
-        mock_redis = MagicMock()
-        mock_pipe = MagicMock()
-        mock_pipe.execute.return_value = [6, False]
-        mock_redis.pipeline.return_value = mock_pipe
-
-        backend = RedisBackend.__new__(RedisBackend)
-        backend._client = mock_redis
-        backend._redis_url = "redis://localhost"
-
+        backend = _make_redis_backend(script_return=[0, 0, 10])
         assert backend.is_allowed("ip1", 5, 60) is False
 
-    def test_is_allowed_returns_true_on_redis_error(self):
-        mock_redis = MagicMock()
-        mock_pipe = MagicMock()
-        mock_pipe.execute.side_effect = Exception("connection lost")
-        mock_redis.pipeline.return_value = mock_pipe
+    def test_allows_on_redis_error_with_failed_reconnect(self):
+        backend = _make_redis_backend(
+            script_side_effect=Exception("connection lost"),
+        )
+        backend._last_reconnect = 0.0
+        with patch.object(backend, "_try_reconnect", return_value=False):
+            result = backend.check("ip1", 5, 60)
+        assert result.allowed is True
 
-        backend = RedisBackend.__new__(RedisBackend)
-        backend._client = mock_redis
-        backend._redis_url = "redis://localhost"
-
-        assert backend.is_allowed("ip1", 5, 60) is True
-
-    def test_is_allowed_when_client_is_none(self):
+    def test_check_when_client_is_none_tries_reconnect(self):
         backend = RedisBackend.__new__(RedisBackend)
         backend._client = None
+        backend._script = None
         backend._redis_url = "redis://localhost"
-
-        assert backend.is_allowed("ip1", 5, 60) is True
+        backend._last_reconnect = 0.0
+        with patch.object(backend, "_try_reconnect", return_value=False):
+            result = backend.check("ip1", 5, 60)
+        assert result.allowed is True
+        assert result.remaining == 5
 
     def test_backend_type_connected(self):
-        mock_redis = MagicMock()
-        backend = RedisBackend.__new__(RedisBackend)
-        backend._client = mock_redis
-        backend._redis_url = "redis://localhost"
+        backend = _make_redis_backend()
         assert backend.backend_type == "redis"
 
     def test_backend_type_disconnected(self):
         backend = RedisBackend.__new__(RedisBackend)
         backend._client = None
         backend._redis_url = "redis://localhost"
+        backend._last_reconnect = 0.0
         assert backend.backend_type == "redis_disconnected"
 
     def test_connected_property_pings(self):
-        mock_redis = MagicMock()
-        mock_redis.ping.return_value = True
-        backend = RedisBackend.__new__(RedisBackend)
-        backend._client = mock_redis
-        backend._redis_url = "redis://localhost"
+        backend = _make_redis_backend()
+        backend._client.ping.return_value = True
         assert backend.connected is True
 
     def test_connected_false_on_error(self):
-        mock_redis = MagicMock()
-        mock_redis.ping.side_effect = Exception("gone")
-        backend = RedisBackend.__new__(RedisBackend)
-        backend._client = mock_redis
-        backend._redis_url = "redis://localhost"
+        backend = _make_redis_backend()
+        backend._client.ping.side_effect = Exception("gone")
         assert backend.connected is False
 
     def test_reset_scans_and_deletes(self):
-        mock_redis = MagicMock()
-        mock_redis.scan.return_value = (0, ["nexus:ratelimit:ip1", "nexus:ratelimit:ip2"])
-        backend = RedisBackend.__new__(RedisBackend)
-        backend._client = mock_redis
-        backend._redis_url = "redis://localhost"
+        backend = _make_redis_backend()
+        backend._client.scan.return_value = (
+            0, ["nexus:ratelimit:ip1", "nexus:ratelimit:ip2"],
+        )
         backend.reset()
-        mock_redis.delete.assert_called_once_with("nexus:ratelimit:ip1", "nexus:ratelimit:ip2")
+        backend._client.delete.assert_called_once_with(
+            "nexus:ratelimit:ip1", "nexus:ratelimit:ip2",
+        )
+
+    def test_reconnect_cooldown(self):
+        backend = RedisBackend.__new__(RedisBackend)
+        backend._client = None
+        backend._script = None
+        backend._redis_url = "redis://localhost"
+        backend._last_reconnect = 9999999999.0
+        result = backend._try_reconnect()
+        assert result is False
 
 
 class TestGetBackend:

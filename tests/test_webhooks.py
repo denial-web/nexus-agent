@@ -13,7 +13,9 @@ from app.services.webhooks import (
     WebhookEvent,
     WebhookPayload,
     _deliver,
+    _is_retryable_status,
     _sign_payload,
+    compute_backoff,
     fire_event,
     shutdown_pool,
     verify_signature,
@@ -105,11 +107,12 @@ class TestDeliver:
         body_bytes = received[0]["body"]
         assert verify_signature(body_bytes, secret, sig_header) is True
 
-    def test_delivery_failure_unreachable(self):
+    def test_delivery_failure_unreachable(self, monkeypatch):
         payload = WebhookPayload(event="test", timestamp="now", data={})
-        with patch("app.services.webhooks._RETRY_BACKOFF_BASE", 0.001):
-            with patch("app.services.webhooks._record_failure"):
-                result = _deliver("http://127.0.0.1:1", payload, None, "wh-fail")
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_BASE", 0.001)
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_MAX", 0.001)
+        with patch("app.services.webhooks._record_failure"):
+            result = _deliver("http://127.0.0.1:1", payload, None, "wh-fail")
         assert result is False
 
 
@@ -280,3 +283,214 @@ class TestPipelineWebhookIntegration:
         call_args = mock_fire.call_args
         assert call_args[0][0] == "input_blocked"
         assert "trace_id" in call_args[0][1]
+
+
+class TestComputeBackoff:
+    def test_delay_within_bounds(self):
+        for attempt in range(5):
+            delay = compute_backoff(attempt, base=1.0, maximum=30.0)
+            assert 0 <= delay <= min(30.0, 1.0 * (2 ** attempt))
+
+    def test_capped_at_maximum(self):
+        for _ in range(20):
+            delay = compute_backoff(10, base=1.0, maximum=5.0)
+            assert delay <= 5.0
+
+    def test_attempt_zero_bounded_by_base(self):
+        for _ in range(20):
+            delay = compute_backoff(0, base=2.0, maximum=60.0)
+            assert 0 <= delay <= 2.0
+
+    def test_jitter_produces_variation(self):
+        delays = {compute_backoff(2, base=1.0, maximum=30.0) for _ in range(50)}
+        assert len(delays) > 1
+
+    def test_uses_settings_defaults(self, monkeypatch):
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_BASE", 0.5)
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_MAX", 2.0)
+        for _ in range(20):
+            delay = compute_backoff(3)
+            assert 0 <= delay <= 2.0
+
+    def test_zero_base_returns_zero(self):
+        delay = compute_backoff(5, base=0.0, maximum=10.0)
+        assert delay == 0.0
+
+
+class TestRetryableStatus:
+    def test_500_is_retryable(self):
+        assert _is_retryable_status(500) is True
+
+    def test_502_is_retryable(self):
+        assert _is_retryable_status(502) is True
+
+    def test_503_is_retryable(self):
+        assert _is_retryable_status(503) is True
+
+    def test_429_is_retryable(self):
+        assert _is_retryable_status(429) is True
+
+    def test_408_is_retryable(self):
+        assert _is_retryable_status(408) is True
+
+    def test_400_is_not_retryable(self):
+        assert _is_retryable_status(400) is False
+
+    def test_401_is_not_retryable(self):
+        assert _is_retryable_status(401) is False
+
+    def test_404_is_not_retryable(self):
+        assert _is_retryable_status(404) is False
+
+    def test_200_is_not_retryable(self):
+        assert _is_retryable_status(200) is False
+
+
+def _test_payload() -> WebhookPayload:
+    return WebhookPayload(event="t", timestamp="now", data={})
+
+
+class TestDeliverBackoff:
+    def test_retries_on_connection_error_with_backoff(self, monkeypatch):
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_BASE", 0.001)
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_MAX", 0.001)
+        monkeypatch.setattr(settings, "WEBHOOK_MAX_RETRIES", 3)
+        monkeypatch.setattr(settings, "WEBHOOK_REQUEST_TIMEOUT", 1.0)
+
+        sleep_calls: list[float] = []
+        with patch("app.services.webhooks.time.sleep", side_effect=lambda d: sleep_calls.append(d)):
+            with patch("app.services.webhooks._record_failure"):
+                result = _deliver(
+                    "http://127.0.0.1:1", _test_payload(), None, "wh-bo",
+                )
+        assert result is False
+        assert len(sleep_calls) == 2
+
+    def test_no_retry_on_non_retryable_4xx(self, monkeypatch):
+        """Non-retryable status codes should fail immediately without retries."""
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_BASE", 0.001)
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_MAX", 0.001)
+        monkeypatch.setattr(settings, "WEBHOOK_MAX_RETRIES", 3)
+
+        class FakeResp:
+            status = 404
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def read(self): return b""
+
+        sleep_calls: list[float] = []
+        with patch("app.services.webhooks.time.sleep", side_effect=lambda d: sleep_calls.append(d)):
+            with patch("urllib.request.urlopen", return_value=FakeResp()):
+                with patch("app.services.webhooks._record_failure") as mock_fail:
+                    result = _deliver(
+                        "http://example.com", _test_payload(), None, "wh-4xx",
+                    )
+
+        assert result is False
+        assert len(sleep_calls) == 0
+        mock_fail.assert_called_once()
+        assert "HTTP 404" in mock_fail.call_args[0][1]
+
+    def test_retries_on_retryable_5xx(self, monkeypatch):
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_BASE", 0.001)
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_MAX", 0.001)
+        monkeypatch.setattr(settings, "WEBHOOK_MAX_RETRIES", 2)
+
+        class FakeResp:
+            status = 503
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def read(self): return b""
+
+        sleep_calls: list[float] = []
+        with patch("app.services.webhooks.time.sleep", side_effect=lambda d: sleep_calls.append(d)):
+            with patch("urllib.request.urlopen", return_value=FakeResp()):
+                with patch("app.services.webhooks._record_failure") as mock_fail:
+                    result = _deliver(
+                        "http://example.com", _test_payload(), None, "wh-5xx",
+                    )
+
+        assert result is False
+        assert len(sleep_calls) == 1
+        mock_fail.assert_called_once()
+
+    def test_succeeds_on_second_attempt(self, monkeypatch):
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_BASE", 0.001)
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_MAX", 0.001)
+        monkeypatch.setattr(settings, "WEBHOOK_MAX_RETRIES", 3)
+
+        call_count = {"n": 0}
+
+        class FailOnceResp:
+            def __init__(self):
+                call_count["n"] += 1
+                self.status = 503 if call_count["n"] == 1 else 200
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def read(self): return b""
+
+        with patch("app.services.webhooks.time.sleep"):
+            with patch("urllib.request.urlopen", side_effect=lambda *a, **k: FailOnceResp()):
+                result = _deliver(
+                    "http://example.com", _test_payload(), None, "wh-ok",
+                )
+
+        assert result is True
+        assert call_count["n"] == 2
+
+    def test_single_retry_uses_config(self, monkeypatch):
+        monkeypatch.setattr(settings, "WEBHOOK_MAX_RETRIES", 1)
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_BASE", 0.001)
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_MAX", 0.001)
+
+        sleep_calls: list[float] = []
+        with patch("app.services.webhooks.time.sleep", side_effect=lambda d: sleep_calls.append(d)):
+            with patch("app.services.webhooks._record_failure"):
+                result = _deliver(
+                    "http://127.0.0.1:1", _test_payload(), None, "wh-1r",
+                )
+        assert result is False
+        assert len(sleep_calls) == 0
+
+
+class TestConfigValidation:
+    def test_negative_backoff_base(self, monkeypatch):
+        from app.services.config_validator import validate
+
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_BASE", -1.0)
+        issues = validate(settings)
+        messages = [i.message for i in issues]
+        assert any("WEBHOOK_BACKOFF_BASE" in m for m in messages)
+
+    def test_max_less_than_base(self, monkeypatch):
+        from app.services.config_validator import validate
+
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_BASE", 5.0)
+        monkeypatch.setattr(settings, "WEBHOOK_BACKOFF_MAX", 2.0)
+        issues = validate(settings)
+        messages = [i.message for i in issues]
+        assert any("WEBHOOK_BACKOFF_MAX" in m for m in messages)
+
+    def test_zero_retries_warning(self, monkeypatch):
+        from app.services.config_validator import validate
+
+        monkeypatch.setattr(settings, "WEBHOOK_MAX_RETRIES", 0)
+        issues = validate(settings)
+        messages = [i.message for i in issues]
+        assert any("WEBHOOK_MAX_RETRIES" in m for m in messages)
+
+    def test_zero_timeout_error(self, monkeypatch):
+        from app.services.config_validator import validate
+
+        monkeypatch.setattr(settings, "WEBHOOK_REQUEST_TIMEOUT", 0.0)
+        issues = validate(settings)
+        messages = [i.message for i in issues]
+        assert any("WEBHOOK_REQUEST_TIMEOUT" in m for m in messages)
+
+    def test_zero_max_failures_warning(self, monkeypatch):
+        from app.services.config_validator import validate
+
+        monkeypatch.setattr(settings, "WEBHOOK_MAX_CONSECUTIVE_FAILURES", 0)
+        issues = validate(settings)
+        messages = [i.message for i in issues]
+        assert any("WEBHOOK_MAX_CONSECUTIVE_FAILURES" in m for m in messages)

@@ -13,10 +13,11 @@ from app.config import settings
 from app.core.covernor.policy_engine import evaluate_action
 from app.core.mcp.config import McpBackend, load_backends, save_backends
 from app.db import get_db
+from app.sanitize import sanitize_for_error
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/mcp", tags=["MCP"])
+router = APIRouter(prefix="/mcp", tags=["MCP"])
 
 
 class McpBackendCreate(BaseModel):
@@ -62,7 +63,7 @@ def create_mcp_backend(body: McpBackendCreate) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="MCP backends cannot be modified in LOCAL_ONLY mode")
     backends = load_backends(_file_path())
     if any(x.name == body.name for x in backends):
-        raise HTTPException(status_code=400, detail=f"Backend {body.name!r} already exists")
+        raise HTTPException(status_code=400, detail=f"Backend {sanitize_for_error(body.name)} already exists")
     backends.append(
         McpBackend(
             name=body.name,
@@ -133,7 +134,7 @@ async def list_backend_tools(name: str, db: Session = Depends(get_db)) -> list[d
             tools = await client.list_tools()
     except Exception as e:
         logger.warning("list_tools failed for %s", name, exc_info=True)
-        raise HTTPException(status_code=502, detail=f"Could not reach MCP backend: {e}") from e
+        raise HTTPException(status_code=502, detail="Could not reach MCP backend") from e
 
     out: list[dict[str, Any]] = []
     for t in tools:

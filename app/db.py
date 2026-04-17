@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 from collections.abc import Generator
 from typing import Any
@@ -7,13 +8,30 @@ from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.config import settings
 
-_connect_args = {}
-if settings.DATABASE_URL.startswith("sqlite"):
-    _connect_args["check_same_thread"] = False
+logger = logging.getLogger(__name__)
 
-engine = create_engine(settings.DATABASE_URL, connect_args=_connect_args)
+_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
 
-if settings.DATABASE_URL.startswith("sqlite"):
+
+def _build_engine_kwargs() -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+
+    if _is_sqlite:
+        kwargs["connect_args"] = {"check_same_thread": False}
+    else:
+        kwargs["pool_size"] = settings.DB_POOL_SIZE
+        kwargs["max_overflow"] = settings.DB_MAX_OVERFLOW
+        kwargs["pool_timeout"] = settings.DB_POOL_TIMEOUT
+        kwargs["pool_pre_ping"] = settings.DB_POOL_PRE_PING
+        if settings.DB_POOL_RECYCLE > 0:
+            kwargs["pool_recycle"] = settings.DB_POOL_RECYCLE
+
+    return kwargs
+
+
+engine = create_engine(settings.DATABASE_URL, **_build_engine_kwargs())
+
+if _is_sqlite:
 
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragma(dbapi_conn: sqlite3.Connection, connection_record: Any) -> None:

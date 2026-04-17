@@ -6,11 +6,11 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.config import Config as AlembicConfig
-from fastapi import FastAPI, Request
-from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -32,8 +32,24 @@ from app.api.training import router as training_router
 from app.api.webhooks import router as webhooks_router
 from app.config import settings
 from app.db import Base, SessionLocal, engine
+from app.errors import (
+    NexusAPIError,
+    http_exception_handler,
+    nexus_api_error_handler,
+    unhandled_exception_handler,
+    validation_exception_handler,
+)
 from app.logging_config import configure_logging, request_id_var
-from app.middleware import AuthMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
+from app.middleware import (
+    AuthMiddleware,
+    BodySizeLimitMiddleware,
+    IdempotencyMiddleware,
+    LegacyApiDeprecationMiddleware,
+    MetricsMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+    ShutdownGuardMiddleware,
+)
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -304,27 +320,22 @@ def _seed_default_critics(db: Session) -> None:
     logger.info("Seeded %d default critic registry nodes", len(defaults))
 
 
-def _validate_production_config() -> None:
-    """Enforce security requirements in non-dev environments."""
-    env = settings.ENVIRONMENT.lower()
-    if env in ("development", "dev", "test"):
-        return
-    if not settings.NEXUS_API_KEY.strip():
-        raise RuntimeError(
-            "NEXUS_API_KEY must be set in non-development environments. "
-            "All API endpoints are unauthenticated without it."
-        )
-    if not settings.SESSION_SECRET.strip():
-        logger.warning(
-            "SESSION_SECRET is empty — dashboard sessions use a hardcoded key. "
-            "Set SESSION_SECRET for production deployments."
-        )
-    logger.warning(
-        "Multi-worker note: Rate limiting, capability tokens, and the training "
-        "scheduler use in-process memory. For multi-worker deployments (uvicorn "
-        "--workers >1), use an external store (Redis) for rate limits and tokens, "
-        "and ensure only one worker runs the scheduler."
-    )
+def _validate_startup_config() -> None:
+    """Run comprehensive config validation; abort on fatal errors."""
+    from app.services.config_validator import validate
+
+    issues = validate(settings)
+    errors = [i for i in issues if i.level == "error"]
+    warnings = [i for i in issues if i.level == "warning"]
+
+    for w in warnings:
+        logger.warning("Config: %s", w.message)
+    for e in errors:
+        logger.error("Config: %s", e.message)
+
+    if errors:
+        summary = "; ".join(e.message for e in errors)
+        raise RuntimeError(f"Fatal configuration errors ({len(errors)}): {summary}")
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -353,7 +364,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _start_time
     _start_time = time.time()
-    _validate_production_config()
+    _validate_startup_config()
     _run_migrations()
 
     async with AsyncExitStack() as stack:
@@ -390,6 +401,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         yield
 
+        from app.services.shutdown import get_coordinator
+
+        coord = get_coordinator()
+        coord.start_drain()
+        await coord.wait_for_drain(settings.SHUTDOWN_DRAIN_SECONDS)
+
         if not _skip_scheduler:
             stop_scheduler()
         shutdown_tracing()
@@ -406,26 +423,38 @@ _cors = settings.CORS_ORIGINS.strip()
 if _cors:
     _origins = [o.strip() for o in _cors.split(",") if o.strip()]
     if _origins:
+        _methods = [m.strip() for m in settings.CORS_ALLOW_METHODS.split(",") if m.strip()]
+        _headers = [h.strip() for h in settings.CORS_ALLOW_HEADERS.split(",") if h.strip()]
+        _creds = "*" not in _origins
         app.add_middleware(
             CORSMiddleware,
             allow_origins=_origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_credentials=_creds,
+            allow_methods=_methods or ["GET"],
+            allow_headers=_headers or ["Content-Type"],
+            max_age=settings.CORS_MAX_AGE,
         )
 
 app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(AuthMiddleware)
+app.add_middleware(LegacyApiDeprecationMiddleware)
+app.add_middleware(IdempotencyMiddleware)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(AuthMiddleware)
+app.add_middleware(BodySizeLimitMiddleware)
+app.add_middleware(ShutdownGuardMiddleware)
+if settings.EXPOSE_METRICS:
+    app.add_middleware(MetricsMiddleware)
 app.add_middleware(RequestIdMiddleware)
 
 
 @app.middleware("http")
 async def mcp_local_only_guard(request: Request, call_next: RequestResponseEndpoint) -> Response:
     if settings.LOCAL_ONLY and request.url.path.startswith("/mcp"):
+        from app.errors import _build_error_body
+
         return JSONResponse(
             status_code=503,
-            content={"detail": "MCP proxy disabled in LOCAL_ONLY mode"},
+            content=_build_error_body(503, "service_unavailable", "MCP proxy disabled in LOCAL_ONLY mode"),
         )
     return await call_next(request)
 
@@ -443,16 +472,10 @@ def _session_secret_key() -> bytes:
 app.add_middleware(SessionMiddleware, secret_key=_session_secret_key())
 
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    if isinstance(exc, RequestValidationError):
-        return await request_validation_exception_handler(request, exc)
-    if isinstance(exc, StarletteHTTPException):
-        detail = exc.detail
-        body: dict = {"detail": detail} if isinstance(detail, str) else {"detail": detail}
-        return JSONResponse(status_code=exc.status_code, content=body)
-    logger.exception("Unhandled exception: %s %s", request.method, request.url.path)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+app.add_exception_handler(NexusAPIError, nexus_api_error_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 
 if settings.EXPOSE_METRICS:
@@ -467,12 +490,23 @@ if settings.EXPOSE_METRICS:
 
 
 @app.get("/health")
-def health_check() -> dict:
-    return {"status": "ok", "app": settings.PROJECT_NAME, "version": "0.1.0"}
+def health_check() -> Response:
+    from app.services.shutdown import get_coordinator
+
+    coord = get_coordinator()
+    if coord.is_draining:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "draining", "app": settings.PROJECT_NAME, "version": "0.1.0"},
+        )
+    return JSONResponse(
+        status_code=200,
+        content={"status": "ok", "app": settings.PROJECT_NAME, "version": "0.1.0"},
+    )
 
 
 @app.get("/health/ready")
-def readiness_check() -> Response:
+def readiness_check(deep: bool = False) -> Response:
     checks: dict = {}
     overall_ok = True
 
@@ -486,7 +520,17 @@ def readiness_check() -> Response:
             db.close()
     except Exception:
         logger.warning("Readiness: database unreachable", exc_info=True)
-    checks["database"] = "connected" if db_ok else "unreachable"
+    db_check: dict[str, Any] = {"status": "connected" if db_ok else "unreachable"}
+    try:
+        pool = engine.pool
+        if hasattr(pool, "size"):
+            db_check["pool_size"] = pool.size()
+            db_check["pool_checked_in"] = pool.checkedin()
+            db_check["pool_checked_out"] = pool.checkedout()
+            db_check["pool_overflow"] = pool.overflow()
+    except Exception:
+        pass
+    checks["database"] = db_check
     if not db_ok:
         overall_ok = False
 
@@ -542,6 +586,36 @@ def readiness_check() -> Response:
     checks["webhooks_enabled"] = settings.WEBHOOKS_ENABLED
     checks["mcp_enabled"] = settings.MCP_ENABLED
 
+    try:
+        from app.services.shutdown import get_coordinator
+
+        coord = get_coordinator()
+        checks["shutdown"] = {
+            "draining": coord.is_draining,
+            "in_flight": coord.in_flight,
+        }
+        if coord.is_draining:
+            overall_ok = False
+    except Exception:
+        checks["shutdown"] = {"draining": False, "in_flight": 0}
+
+    if deep:
+        try:
+            from app.services.health_probe import probe_providers
+
+            provider_probes = probe_providers()
+            unreachable = [
+                name for name, info in provider_probes.items()
+                if not info.get("reachable")
+            ]
+            checks["provider_probes"] = provider_probes
+            if unreachable:
+                checks["provider_probes_warning"] = (
+                    f"Unreachable providers: {', '.join(unreachable)}"
+                )
+        except Exception:
+            checks["provider_probes"] = {"error": "probe failed"}
+
     uptime = round(time.time() - _start_time, 1) if _start_time else 0
     status_label = "ready" if overall_ok else "degraded"
     body = {
@@ -554,14 +628,25 @@ def readiness_check() -> Response:
 
 app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
 
-app.include_router(agent_router)
-app.include_router(traces_router)
-app.include_router(critic_router)
-app.include_router(governance_router)
-app.include_router(skills_router)
-app.include_router(mcp_router)
-app.include_router(training_router)
-app.include_router(webhooks_router)
+_api_routers = [
+    agent_router,
+    traces_router,
+    critic_router,
+    governance_router,
+    skills_router,
+    mcp_router,
+    training_router,
+    webhooks_router,
+]
+
+v1_router = APIRouter(prefix="/v1")
+legacy_router = APIRouter(prefix="/api")
+for _r in _api_routers:
+    v1_router.include_router(_r)
+    legacy_router.include_router(_r)
+
+app.include_router(v1_router)
+app.include_router(legacy_router)
 app.include_router(dashboard_router)
 
 if settings.MCP_ENABLED and not settings.LOCAL_ONLY:

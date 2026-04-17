@@ -1,8 +1,11 @@
+import logging
 import os
 
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
+
+logging.raiseExceptions = False
 
 _TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "sqlite:///./test_nexus.db")
 _IS_SQLITE = _TEST_DB_URL.startswith("sqlite")
@@ -98,6 +101,27 @@ def _reset_rate_limiter():
     yield
     if _rate_limiter_instance is not None:
         _rate_limiter_instance.reset()
+
+
+@pytest.fixture(autouse=True)
+def _reset_shutdown_coordinator():
+    """Ensure shutdown coordinator is fresh for every test."""
+    from app.services.shutdown import reset_coordinator
+
+    reset_coordinator()
+    yield
+    reset_coordinator()
+
+
+@pytest.fixture(autouse=True)
+def _drain_webhook_pool():
+    """Drain the webhook dispatcher thread pool at the end of every test so
+    background deliveries don't outlive pytest's per-test stdout/stderr
+    capture and surface as noisy 'I/O operation on closed file' errors."""
+    yield
+    from app.services.webhooks import shutdown_pool
+
+    shutdown_pool(wait=True, timeout=5.0)
 
 
 @pytest.fixture

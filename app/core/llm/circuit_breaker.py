@@ -131,16 +131,36 @@ class CircuitBreaker:
     def get_status(self) -> dict:
         with self._lock:
             state = self._evaluate_state()
-            cutoff = time.monotonic() - self._config.rolling_window_seconds
+            now = time.monotonic()
+            cutoff = now - self._config.rolling_window_seconds
             recent_failures = sum(
                 1 for t in self._failure_timestamps if t > cutoff
             )
+            last_ts = (
+                max(self._failure_timestamps)
+                if self._failure_timestamps
+                else self._last_failure_time if self._last_failure_time > 0 else 0
+            )
+            since_last_failure = (
+                round(now - last_ts, 1) if last_ts > 0 else None
+            )
+            recovery_remaining = None
+            if state == CircuitState.OPEN and self._last_failure_time > 0:
+                remaining = self._config.recovery_timeout_seconds - (
+                    now - self._last_failure_time
+                )
+                recovery_remaining = round(max(0.0, remaining), 1)
+
             return {
                 "name": self.name,
                 "state": state.value,
                 "recent_failures": recent_failures,
                 "failure_threshold": self._config.failure_threshold,
                 "recovery_timeout_seconds": self._config.recovery_timeout_seconds,
+                "rolling_window_seconds": self._config.rolling_window_seconds,
+                "since_last_failure_seconds": since_last_failure,
+                "recovery_remaining_seconds": recovery_remaining,
+                "half_open_successes": self._half_open_successes,
             }
 
 

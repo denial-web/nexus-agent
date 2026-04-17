@@ -25,6 +25,7 @@ from app.config import settings
 from app.core.llm.cache import get_cache, reset_cache
 from app.core.llm.circuit_breaker import CircuitOpenError, get_registry
 from app.core.llm.models import LLMChunk, LLMResponse
+from app.logging_config import request_id_var
 from app.metrics import CACHE_HITS, CACHE_MISSES, CB_FALLBACKS, CB_REJECTIONS, LLM_CALLS, LLM_ERRORS
 from app.tracing import get_tracer, set_span_attributes, span
 
@@ -45,6 +46,19 @@ _client_lock = threading.Lock()
 
 _local_models: dict[str, Any] = {}
 _local_tokenizers: dict[str, Any] = {}
+
+
+def get_request_id() -> str:
+    """Read the current request correlation ID from context."""
+    return request_id_var.get()
+
+
+def _correlation_headers() -> dict[str, str]:
+    """Build extra HTTP headers for outgoing LLM API calls."""
+    rid = get_request_id()
+    if rid and rid != "-":
+        return {"X-Request-ID": rid}
+    return {}
 
 
 def _get_local_tokenizer(model: str) -> Any:
@@ -305,10 +319,12 @@ def _call_openai(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-    )
+    kwargs: dict[str, Any] = {"model": model, "messages": messages}
+    headers = _correlation_headers()
+    if headers:
+        kwargs["extra_headers"] = headers
+
+    response = client.chat.completions.create(**kwargs)
     choice = response.choices[0]
     text = (choice.message.content or "").strip()
     token_count = 0
@@ -336,10 +352,13 @@ def _call_ollama(
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-    )
+
+    kwargs: dict[str, Any] = {"model": model, "messages": messages}
+    headers = _correlation_headers()
+    if headers:
+        kwargs["extra_headers"] = headers
+
+    response = client.chat.completions.create(**kwargs)
     choice = response.choices[0]
     text = (choice.message.content or "").strip()
     token_count = 0
@@ -367,10 +386,12 @@ def _call_deepseek(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-    )
+    kwargs: dict[str, Any] = {"model": model, "messages": messages}
+    headers = _correlation_headers()
+    if headers:
+        kwargs["extra_headers"] = headers
+
+    response = client.chat.completions.create(**kwargs)
     choice = response.choices[0]
     text = (choice.message.content or "").strip()
     token_count = 0
@@ -435,6 +456,7 @@ def _call_local_hf(
 def _mock_response(prompt: str, latency_start: float) -> LLMResponse:
     text = mock_llm_text(prompt)
     latency_ms = (time.perf_counter() - latency_start) * 1000
+    rid = get_request_id()
     return LLMResponse(
         text=text,
         model_id="mock",
@@ -442,6 +464,7 @@ def _mock_response(prompt: str, latency_start: float) -> LLMResponse:
         latency_ms=round(latency_ms, 2),
         provider="mock",
         raw_response=None,
+        request_id=rid if rid != "-" else None,
     )
 
 
@@ -481,11 +504,13 @@ def _generate_with_retries(
     """Core retry loop for a single provider. Records circuit breaker events."""
     cb = get_registry().get(route_provider)
     last_error: BaseException | None = None
+    rid = get_request_id()
     for attempt in range(_MAX_ATTEMPTS):
         with span(_tracer, "llm_call_attempt", attributes={
             "llm.provider": route_provider,
             "llm.model": resolved_model,
             "llm.attempt": attempt + 1,
+            "request.id": rid,
         }) as s:
             try:
                 if route_provider == "gemini":
@@ -507,16 +532,18 @@ def _generate_with_retries(
                     latency_ms=round(latency_ms, 2),
                     provider=route_provider,
                     raw_response=raw,
+                    request_id=rid if rid != "-" else None,
                 )
             except Exception as exc:
                 last_error = exc
                 LLM_ERRORS.labels(provider=route_provider, error_type=type(exc).__name__).inc()
                 cb.record_failure()
                 logger.warning(
-                    "LLM %s attempt %s/%s failed: %s",
+                    "LLM %s attempt %s/%s failed (request_id=%s): %s",
                     route_provider,
                     attempt + 1,
                     _MAX_ATTEMPTS,
+                    rid,
                     exc,
                 )
                 if attempt < _MAX_ATTEMPTS - 1 and _should_retry(exc, route_provider):
@@ -542,10 +569,12 @@ def generate(
     route_provider, resolved_model, api_key = _resolve_route(eff_model_id)
     start = time.perf_counter()
 
+    rid = get_request_id()
     with span(_tracer, "llm_generate", attributes={
         "llm.provider": route_provider,
         "llm.model": resolved_model,
         "llm.model_id_requested": model_id or "",
+        "request.id": rid,
     }) as root_span:
         cache = get_cache()
         cached = cache.get(prompt, eff_model_id, system_prompt)
@@ -560,6 +589,7 @@ def generate(
                 latency_ms=round(latency_ms, 2),
                 provider=cached.provider,
                 raw_response=cached.raw_response,
+                request_id=rid if rid != "-" else None,
             )
         CACHE_MISSES.inc()
         set_span_attributes(root_span, {"llm.cache_hit": False})
@@ -579,6 +609,7 @@ def generate(
                 latency_ms=round(latency_ms, 2),
                 provider="local",
                 raw_response=raw,
+                request_id=rid if rid != "-" else None,
             )
             cache.put(prompt, eff_model_id, system_prompt, resp)
             return resp
@@ -593,6 +624,7 @@ def generate(
                 latency_ms=round(latency_ms, 2),
                 provider="ollama",
                 raw_response=raw,
+                request_id=rid if rid != "-" else None,
             )
             cache.put(prompt, eff_model_id, system_prompt, resp)
             return resp

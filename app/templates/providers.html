@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Providers — Nexus Agent{% endblock %}
+{% block content %}
+<h1>Provider Health</h1>
+
+<div class="stats">
+  <div class="stat">
+    <div class="value">{{ configured_count }}</div>
+    <div class="label">Configured</div>
+  </div>
+  <div class="stat">
+    <div class="value" style="color: var(--green);">{{ healthy_count }}</div>
+    <div class="label">Healthy</div>
+  </div>
+  <div class="stat">
+    <div class="value" style="color: {% if degraded_count > 0 %}var(--yellow){% else %}var(--text-dim){% endif %};">{{ degraded_count }}</div>
+    <div class="label">Degraded</div>
+  </div>
+  <div class="stat">
+    <div class="value" style="color: {% if down_count > 0 %}var(--red){% else %}var(--text-dim){% endif %};">{{ down_count }}</div>
+    <div class="label">Down</div>
+  </div>
+</div>
+
+<div style="margin-bottom: 16px;">
+  {% if probed %}
+  <span class="badge badge-pass" style="margin-right: 8px;">Live probes ran</span>
+  {% endif %}
+  <a href="/dashboard/providers?probe=true" class="btn btn-sm btn-primary">Run Live Probes</a>
+</div>
+
+<div class="prov-grid">
+  {% for p in providers %}
+  <div class="card prov-card prov-{{ p.overall_status }}">
+    <div class="prov-header">
+      <div>
+        <div class="prov-name">{{ p.display_name }}</div>
+        <div class="text-sm text-dim">{{ p.name }}</div>
+      </div>
+      <span class="badge badge-prov-{{ p.overall_status }}">{{ p.overall_status }}</span>
+    </div>
+
+    <dl class="prov-details">
+      <dt>Configured</dt>
+      <dd>{% if p.configured %}<span style="color: var(--green);">Yes</span>{% else %}<span style="color: var(--text-dim);">No</span>{% endif %}</dd>
+
+      {% if p.configured and p.default_model %}
+      <dt>Default Model</dt>
+      <dd class="mono">{{ p.default_model }}</dd>
+      {% endif %}
+
+      {% if p.circuit_breaker %}
+      <dt>Circuit Breaker</dt>
+      <dd>
+        <span class="badge badge-cb-{{ p.circuit_breaker.state }}">{{ p.circuit_breaker.state | replace("_", " ") }}</span>
+        <span class="text-sm text-dim" style="margin-left: 4px;">{{ p.circuit_breaker.recent_failures }}/{{ p.circuit_breaker.failure_threshold }} failures</span>
+      </dd>
+      {% elif p.configured %}
+      <dt>Circuit Breaker</dt>
+      <dd class="text-dim">Not yet initialized</dd>
+      {% endif %}
+
+      {% if p.probe %}
+      <dt>Connectivity</dt>
+      <dd>
+        {% if p.probe.reachable %}
+        <span style="color: var(--green);">Reachable</span>
+        <span class="text-sm text-dim">({{ p.probe.latency_s }}s)</span>
+        {% else %}
+        <span style="color: var(--red);">Unreachable</span>
+        {% if p.probe.error %}
+        <div class="text-sm text-dim" style="margin-top: 4px; word-break: break-all;">{{ p.probe.error | truncate(120) }}</div>
+        {% endif %}
+        {% endif %}
+      </dd>
+      {% elif probed and p.configured %}
+      <dt>Connectivity</dt>
+      <dd class="text-dim">Probe skipped</dd>
+      {% endif %}
+    </dl>
+
+    {% if p.circuit_breaker and p.circuit_breaker.state != "closed" %}
+    <div class="prov-actions">
+      <form method="post" action="/dashboard/circuit-breakers/{{ p.name }}/reset" style="display: inline;">
+        {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
+        <button type="submit" class="btn btn-sm btn-primary">Reset Circuit</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
