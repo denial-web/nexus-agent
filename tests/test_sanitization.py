@@ -112,13 +112,14 @@ class TestSanitizedErrorResponses:
         assert f"'{name}'" in detail
 
     def test_governance_409_strips_control_chars(self, client):
-        name = f"pol\x00icy-{uuid.uuid4().hex[:8]}"
+        name = f"pol\x07icy-{uuid.uuid4().hex[:8]}"
         payload = {"name": name, "action_pattern": "test", "decision": "allow"}
         client.post("/v1/governance/policies", json=payload)
 
         resp = client.post("/v1/governance/policies", json=payload)
         assert resp.status_code == 409
         detail = resp.json()["error"]["message"]
+        assert "\x07" not in detail
         assert "\x00" not in detail
 
     def test_mcp_502_no_exception_leak(self, client, monkeypatch):

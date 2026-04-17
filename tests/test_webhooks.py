@@ -494,3 +494,60 @@ class TestConfigValidation:
         issues = validate(settings)
         messages = [i.message for i in issues]
         assert any("WEBHOOK_MAX_CONSECUTIVE_FAILURES" in m for m in messages)
+
+
+class TestShutdownPoolDrain:
+    """Regression tests for shutdown_pool(wait=True) — ensures background
+    deliveries complete before the pool is torn down so they can't outlive
+    pytest's stdout/stderr capture and emit spurious tracebacks."""
+
+    def test_shutdown_wait_blocks_until_inflight_completes(self):
+        """shutdown_pool(wait=True, timeout=N) must block until submitted
+        jobs finish instead of returning while threads are still running."""
+        import time as _time
+
+        from app.services import webhooks as wh_module
+
+        wh_module.shutdown_pool()
+        pool = wh_module._get_pool()
+
+        started = threading.Event()
+        finished = threading.Event()
+
+        def _slow_job():
+            started.set()
+            _time.sleep(0.3)
+            finished.set()
+
+        pool.submit(_slow_job)
+        assert started.wait(1.0), "job never started"
+
+        before = _time.monotonic()
+        wh_module.shutdown_pool(wait=True, timeout=5.0)
+        elapsed = _time.monotonic() - before
+
+        assert finished.is_set(), "shutdown returned before job finished"
+        assert elapsed >= 0.2, f"shutdown did not actually wait (elapsed={elapsed:.3f}s)"
+        assert wh_module._pool is None
+
+    def test_shutdown_is_idempotent(self):
+        """Calling shutdown_pool() twice must not raise, even without a pool."""
+        from app.services import webhooks as wh_module
+
+        wh_module.shutdown_pool()
+        wh_module.shutdown_pool()
+        wh_module.shutdown_pool(wait=True, timeout=1.0)
+        assert wh_module._pool is None
+
+    def test_safe_log_exception_swallows_closed_stream(self, monkeypatch):
+        """_safe_log_exception must not propagate ValueError from a closed
+        stream — this is what protects background worker threads during
+        pytest teardown."""
+        from app.services import webhooks as wh_module
+
+        def _boom(*_a, **_k):
+            raise ValueError("I/O operation on closed file.")
+
+        monkeypatch.setattr(wh_module.logger, "exception", _boom)
+
+        wh_module._safe_log_exception("ignored %s", "arg")
