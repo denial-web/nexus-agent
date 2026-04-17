@@ -23,4 +23,4 @@ class Episode(Base):
     step_count = Column(Integer, nullable=True)
     self_corrections = Column(Integer, nullable=True)
     agent_trajectory = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

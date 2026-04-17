@@ -22,4 +22,4 @@ class StepTrace(Base):
     critic_scores = Column(JSON, nullable=True)
     reflection = Column(Text, nullable=True)
     reward_signal = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

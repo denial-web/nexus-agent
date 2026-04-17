@@ -36,10 +36,10 @@ class LabelingItem(Base):
     # Training metadata
     status = Column(String(20), nullable=False, default="pending")  # "pending", "labeled", "exported", "trained"
     training_batch_id = Column(String, nullable=True)
-    exported_at = Column(DateTime, nullable=True)
+    exported_at = Column(DateTime(timezone=True), nullable=True)
 
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    labeled_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    labeled_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_label_status", "status"),

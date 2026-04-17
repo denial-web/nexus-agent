@@ -56,7 +56,7 @@ class Trace(Base):
     token_count = Column(Integer, nullable=True)
     error = Column(Text, nullable=True)
     status = Column(String(20), nullable=False, default="pending")
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     # SHA-256 hash chain — each trace links to the previous
     prev_hash = Column(String(64), nullable=True)

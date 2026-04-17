@@ -31,9 +31,9 @@ class ApprovalRequest(Base):
     capability_token = Column(Text, nullable=True)
     token_scope = Column(JSON, nullable=True)
 
-    expires_at = Column(DateTime, nullable=True)
-    resolved_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     __table_args__ = (
         Index("ix_approval_status", "status"),
@@ -50,6 +50,6 @@ class ApprovalVote(Base):
     decision = Column(String(10), nullable=False)  # "approve", "deny"
     reason = Column(Text, nullable=True)
     signature = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     __table_args__ = (Index("uq_vote_request_approver", "request_id", "approver_id", unique=True),)

@@ -19,10 +19,10 @@ class DoctrineOutbox(Base):
     items_json = Column(Text, nullable=False)
     attempts = Column(Integer, nullable=False, default=0)
     last_error = Column(Text, nullable=True)
-    next_retry_at = Column(DateTime, nullable=True)
+    next_retry_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(20), nullable=False, default="pending")
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     __table_args__ = (Index("ix_doctrine_outbox_status_next", "status", "next_retry_at"),)
 
@@ -33,7 +33,7 @@ class CalibrationSnapshot(Base):
     __tablename__ = "calibration_snapshots"
 
     id = Column(String, primary_key=True, default=lambda: uuid.uuid4().hex)
-    recorded_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC), index=True)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), index=True)
     ece = Column(Float, nullable=False)
     num_samples = Column(Integer, nullable=False)
     needs_recalibration = Column(Boolean, nullable=False, default=False)

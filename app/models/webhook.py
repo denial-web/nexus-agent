@@ -24,8 +24,8 @@ class Webhook(Base):
     description = Column(Text, nullable=True)
 
     failure_count = Column(Integer, nullable=False, default=0)
-    last_triggered_at = Column(DateTime, nullable=True)
+    last_triggered_at = Column(DateTime(timezone=True), nullable=True)
     last_error = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
