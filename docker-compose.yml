@@ -1,36 +1,61 @@
+# Nexus Agent — Docker Compose
+#
+# Profiles:
+#   default          → SQLite (single-file, no external deps)
+#   --profile prod   → Postgres 16 + Redis 7 + Nexus (production stack)
+#
+# Quick start:
+#   cp .env.example .env   # fill in API keys
+#   docker compose up -d                          # SQLite dev
+#   docker compose --profile prod up -d           # full prod stack
+
 services:
-  nexus-agent:
+  # ---------- SQLite mode (default) ----------
+  nexus:
     build: .
     ports:
-      - "9000:9000"
+      - "${NEXUS_PORT:-9000}:9000"
     env_file:
       - .env
     environment:
-      - DATABASE_URL=sqlite:////app/data/nexus.db
+      DATABASE_URL: "sqlite:////app/data/nexus.db"
     volumes:
       - nexus-data:/app/data
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
-  nexus-agent-pg:
+  # ---------- Production mode (--profile prod) ----------
+  nexus-prod:
     build: .
     ports:
-      - "9000:9000"
+      - "${NEXUS_PORT:-9000}:9000"
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql://nexus:nexus@postgres:5432/nexus_db
+      DATABASE_URL: "postgresql://nexus:${POSTGRES_PASSWORD:-nexus}@postgres:5432/nexus_db"
+      REDIS_URL: "redis://redis:6379/0"
+      ENVIRONMENT: "production"
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     profiles:
-      - postgres
+      - prod
 
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: nexus
-      POSTGRES_PASSWORD: nexus
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-nexus}"
       POSTGRES_DB: nexus_db
     volumes:
       - pg-data:/var/lib/postgresql/data
@@ -39,9 +64,31 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     profiles:
-      - postgres
+      - prod
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    profiles:
+      - prod
 
 volumes:
   nexus-data:
   pg-data:
+  redis-data:
