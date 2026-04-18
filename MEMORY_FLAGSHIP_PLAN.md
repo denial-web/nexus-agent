@@ -6,7 +6,7 @@
 
 ## 0. Resume-Here (Agent Orientation)
 
-**Current status:** Phase 12A Week 1 **DONE**. Phase 12A Week 2 **DONE**. Phase 12B Week 3 **DONE** — all six benchmarks + scanner hardening + nightly_benchmark workflow + `docs/benchmarks.md` shipped. Week 3 is fully closed out.
+**Current status:** Phase 12A Week 1 **DONE**. Phase 12A Week 2 **DONE**. Phase 12B Week 3 **DONE** — all six benchmarks + scanner hardening + nightly_benchmark workflow + `docs/benchmarks.md` shipped. Phase 12B Week 4 **IN PROGRESS** — `app/core/memory/integrity.py` + `GET /v1/memory/integrity` shipped (hash-chain verifier is now an externally-callable audit primitive; benchmark delegates to it). Baseline: **1361 passed, 0 skipped**. Remaining Week 4 work: dashboard routes, `nexus memory` CLI, README rewrite, docs/memory.md + integration docs, screencast script, launch playbook.
 Shipped in Week 2: additive Alembic migration `d3cf357233d3` (beliefs_used /
 beliefs_formed on traces + episodes, all nullable), `_retrieve_beliefs()`
 and `_extract_and_persist_beliefs()` wired into `run_agent()`, trace +
@@ -292,18 +292,23 @@ We do NOT reproduce Mem0 / LoCoMo / LongMemEval. Focus on benchmarks that prove 
 
 ### Week 4 — Dashboard, CLI, Launch
 
-- [ ] `app/core/memory/integrity.py` + `GET /v1/memory/integrity` — promote
-  `tests/eval/contradiction_qa.py::_recompute_hash` + `_verify_chain` out of
-  test code and into a production verifier. The "tamper-evident hash chain"
-  claim in the HN pitch needs an externally-callable proof; currently the
-  only thing that can verify the chain is a benchmark. API should accept an
-  optional `user_id` scope (chain is per-user, per writer's design), return
-  `{"verified": bool, "rows_checked": N, "first_break_at": belief_id | null}`,
-  and take an `as_of` to verify a historical window. Must preserve the
-  SQLite naive-datetime normalization and the `"genesis"` sentinel handling
-  that contradiction_qa already encodes. Covernor-gate under
-  `memory:read:integrity` (read-only, default allow — this is an audit
-  primitive, not a write).
+- [x] `app/core/memory/integrity.py` + `GET /v1/memory/integrity` — promoted
+  `contradiction_qa._recompute_hash` + `_verify_chain` to a production
+  `IntegrityResult`-returning module. Supports per-user scope,
+  whole-store audit mode (default sentinel), and bitemporal `as_of`
+  restriction (tz-aware enforced, same as `beliefs_as_of`). Route
+  mounted at `/v1/memory/integrity` and `/api/memory/integrity`,
+  Covernor-gated on `memory:read:integrity` with a default-allow
+  policy (`memory-allow-integrity-read`, priority 20, risk_level=low)
+  seeded by `_seed_memory_policies`. Broken chains surface as 200 +
+  `verified=false` (audit finding, not HTTP error); missing policy
+  surfaces as structured 403. `tests/eval/contradiction_qa._verify_chain`
+  now delegates to the production module so the benchmark and the
+  runtime stay in byte-for-byte sync. 28 new tests
+  (`tests/test_memory_integrity.py`) cover happy path, tamper detection
+  on every hashed field, per-user isolation, NULL-user chain, audit
+  mode, `as_of` boundaries, governance gate, and 400/403/503 edge
+  cases. Full suite: **1361 passed, 0 skipped**.
 - [ ] [app/templates/memory.html](app/templates/memory.html) + dashboard routes:
   - `/dashboard/memory` — belief count, Beta confidence histogram, contradiction log, meta-memory leaderboard
   - `/dashboard/memory/{id}` — belief detail with mermaid DAG of derivation
@@ -591,5 +596,9 @@ Do NOT plan Phase 13 timing assuming month-3 revenue. That's fantasy for a solo 
 - **2026-04-17 (week 1 finale)** — Covernor `memory:*` seeding uses TWO policies, not a single conditional one: (1) `memory-default-deny` at priority 100 matching `memory:write:*`, (2) `memory-allow-preference-write` at priority 10 matching `memory:write:preference`. Lower priority wins, so preferences resolve to allow while everything else falls through to deny. This keeps the intent readable in the DB and lets operators audit/disable the scoped allow without touching the namespace-wide deny.
 - **2026-04-17 (week 1 finale)** — Writer returns a typed `WriteOutcome` dataclass with `status` literal (`accepted` / `superseded` / `rejected` / `needs_evidence` / `denied_by_policy` / `skipped_flag_off` / `error`) and embeds the full `SkepticismDecision` + `PolicyDecision` in the outcome. This gives the upcoming `/v1/memory/beliefs` API a single object to surface for every write attempt, including the ones that got rejected — critical for the "explain why you didn't store this" story that OpenClaw and Hermes don't have.
 - **2026-04-18 (week 1 close-out)** — Regression tripwire runs as a **dedicated CI job** (`memory-regression`), not a step inside `test-sqlite`. Rationale: the two-tier contract is the single highest-signal safety gate for the entire memory programme — if it's buried in a 1250-test output the signal is lost. Dedicated job surfaces as its own GitHub status check, fails fast (~15s vs full suite), explicitly exports `MEMORY_ENABLED=false` (belt-and-braces beyond the default), and stays SQLite-only because the tripwire is a behavioral contract, not a dialect portability test (full `test-postgres` still exercises it as part of the complete suite). Job placed after `lint`, in parallel with `test-sqlite` / `test-postgres`. Self-verified in this session by mutating the golden fixture and confirming Tier B fails.
+- **2026-04-18 (week 4 kickoff)** — Integrity verifier signature: `verify_chain(db, *, user_id=..., as_of=None)`, where `user_id=...` (a sentinel) means "walk every chain", `user_id=None` explicitly means "NULL-user chain only", and `user_id="alice"` means "Alice's chain only". Three modes in one signature — conflating "default" with `None` would either skip the NULL chain silently (bug) or make it unreachable from the API layer. Dashboards want all-chain audit by default; Python callers sometimes need the NULL scope specifically. The `...` sentinel is a pragmatic fix for that.
+- **2026-04-18 (week 4 kickoff)** — Integrity endpoint returns **200 with `verified=false`** on a broken chain, NOT a 5xx. A broken chain is an audit FINDING — the endpoint performed its job successfully, it just found a problem. 5xx would make operational dashboards think the integrity service itself was down, which is the opposite of what we want auditors to see. Follows the same pattern as the `tool_injection_redteam` benchmark's JSON output.
+- **2026-04-18 (week 4 kickoff)** — `memory:read:integrity` seeded as **default-allow** (priority 20, risk_level=low). This is a read-only audit primitive; gating it behind a write-style allow would make compliance verification harder without reducing risk. Operators who want tighter control can add a higher-priority deny rule — the config layer supports this today. If a matching policy returns `require_approval`, the endpoint surfaces a structured 403 rather than routing through the K-of-N flow; the approval flow is designed for state-mutating actions and bolting it onto a read-only audit call would be a footgun more than a feature.
+- **2026-04-18 (week 4 kickoff)** — `contradiction_qa._verify_chain` refactored to a **thin wrapper** around `app.core.memory.integrity.verify_chain` (delegation, not re-import + inline). Rationale: keeping two independent hash-reproduction implementations is a drift hazard — if the writer ever changes the hash payload, only one would get updated. The benchmark keeps its `_verify_chain(db, user_id) -> bool` signature unchanged so the tamper test + schema asserts still read as a boolean contract; the internal implementation is now a one-liner.
 
 Add new decisions as they are made. Never edit past entries.

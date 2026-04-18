@@ -1,13 +1,14 @@
 """
-Belief memory REST API (Phase 12 Week 2).
+Belief memory REST API (Phase 12 Week 2 + Week 4).
 
-Five endpoints, all under both `/v1/memory` and `/api/memory`:
+Six endpoints, all under both `/v1/memory` and `/api/memory`:
 
 - `GET  /memory`                       — list live beliefs (scoped + paged)
 - `GET  /memory/{belief_id}/history`   — bitemporal history for an entity+predicate
 - `GET  /memory/{belief_id}/explain`   — ranked retrieval signals for one belief
 - `POST /memory/forget`                — user-directed tombstoning
 - `GET  /memory/stats`                 — health/metrics for the memory subsystem
+- `GET  /memory/integrity`             — hash-chain verification (Week 4)
 
 All endpoints return HTTP 503 `memory_disabled` when `MEMORY_ENABLED=False`.
 This matches the rest of the codebase's "feature flag at the edge" pattern
@@ -26,12 +27,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.core.covernor.policy_engine import evaluate_action
 from app.core.memory.confidence import BetaConfidence
 from app.core.memory.forgetting import (
     effective_sample_size,
     forget_by_entity,
     parse_decay_profile,
 )
+from app.core.memory.integrity import verify_chain
 from app.core.memory.retrieval import RetrievalQuery, retrieve
 from app.db import get_db
 from app.errors import NexusAPIError
@@ -122,6 +125,25 @@ class StatsResponse(BaseModel):
     by_entity_type: dict[str, int]
     by_source_type: dict[str, int]
     decay_profile: dict[str, str]  # human-readable ("180d", "inf", ...)
+
+
+class IntegrityResponse(BaseModel):
+    """Result of a hash-chain verification run.
+
+    Mirrors `app.core.memory.integrity.IntegrityResult` verbatim plus a
+    couple of display-only fields (`checked_user_count`, ISO `as_of`)
+    so dashboards don't need to re-derive them. `verified=True` with
+    `rows_checked=0` is a legitimate outcome for empty scopes — it
+    means "nothing to disprove," not "skipped."
+    """
+
+    verified: bool
+    rows_checked: int
+    first_break_at: str | None
+    reason: str | None
+    scope_user_ids: list[str | None]
+    checked_user_count: int
+    as_of: datetime | None
 
 
 # ---------------------------------------------------------------------------
@@ -457,4 +479,118 @@ def memory_stats(db: Session = Depends(get_db)) -> StatsResponse:
         by_entity_type=by_entity_type,
         by_source_type=by_source_type,
         decay_profile=_format_half_life(settings.MEMORY_DECAY_PROFILE),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /memory/integrity — hash-chain verification (Week 4)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/integrity", response_model=IntegrityResponse)
+def verify_integrity(
+    user_id: str | None = Query(
+        None,
+        description=(
+            "Restrict verification to a single per-user chain. Omit to walk "
+            "every distinct chain in the DB (audit mode)."
+        ),
+    ),
+    scope_all: bool = Query(
+        True,
+        description=(
+            "When true (default) and `user_id` is omitted, walk every chain. "
+            "When false and `user_id` is omitted, verify only the NULL-user "
+            "(shared/system) chain."
+        ),
+    ),
+    as_of: datetime | None = Query(
+        None,
+        description=(
+            "Verify the chain as of a historical timestamp. ISO 8601, "
+            "timezone-aware. Rows with observed_at > as_of are ignored. "
+            "Omit to verify up to the most recent row."
+        ),
+    ),
+    db: Session = Depends(get_db),
+) -> IntegrityResponse:
+    """Verify the tamper-evident belief hash chain.
+
+    This endpoint is the externally-callable proof behind the
+    "tamper-evident audit trail" claim in the Nexus pitch. Previously
+    the only verifier lived in a benchmark (`contradiction_qa`); now
+    dashboards, CLI tools, and third-party auditors can call it.
+
+    **Governance.** The action is Covernor-gated as
+    `memory:read:integrity`. The default seed policy allows it
+    (priority 20, risk_level=low) because this is a read-only audit
+    primitive — restricting it would make compliance verification
+    harder without a corresponding risk reduction. Operators who
+    want to lock it down can add a higher-priority deny rule.
+
+    **Query semantics.**
+    * `user_id=alice` → verify only Alice's chain.
+    * `user_id` omitted, `scope_all=true` (default) → verify every
+      chain, including the NULL-user chain.
+    * `user_id` omitted, `scope_all=false` → verify only the
+      NULL-user (shared/system) chain. Distinct from the default so
+      callers can target the NULL scope explicitly.
+    * `as_of` restricts verification to rows with `observed_at <=
+      as_of` — matches `retrieval.beliefs_as_of()` semantics.
+
+    Returns a structured result. A broken chain is a successful
+    200 response with `verified=false` and the id of the first
+    offending row. 503 means the subsystem is disabled.
+    """
+    _ensure_enabled()
+
+    decision = evaluate_action(
+        "memory:read:integrity",
+        resource="*",
+        db_session=db,
+    )
+    if decision.decision == "deny":
+        raise NexusAPIError(
+            403,
+            "governance_denied",
+            f"Memory integrity verification denied by policy: {decision.reason}",
+            details={"policy_id": decision.policy_id, "policy_name": decision.policy_name},
+        )
+    if decision.decision == "require_approval":
+        # The API layer doesn't wire into the K-of-N approval flow for
+        # read-only audit queries — if an operator wants approval gating
+        # on integrity reads, they can build that on top. We surface a
+        # structured 403 so the intent is visible in logs rather than
+        # silently falling back to allow.
+        raise NexusAPIError(
+            403,
+            "governance_denied",
+            "Memory integrity verification requires approval; this endpoint does not support the approval flow.",
+            details={"policy_id": decision.policy_id, "policy_name": decision.policy_name},
+        )
+
+    if as_of is not None and as_of.tzinfo is None:
+        raise NexusAPIError(
+            400,
+            "invalid_timestamp",
+            "`as_of` must be timezone-aware (ISO 8601 with an offset such as '+00:00' or 'Z').",
+        )
+
+    # Resolve the scope sentinel. Query param semantics are documented above;
+    # the integrity module uses `user_id=...` as "all chains", so translate.
+    if user_id is not None:
+        result = verify_chain(db, user_id=user_id, as_of=as_of)
+    elif scope_all:
+        result = verify_chain(db, as_of=as_of)  # default sentinel = all chains
+    else:
+        result = verify_chain(db, user_id=None, as_of=as_of)
+
+    return IntegrityResponse(
+        verified=result.verified,
+        rows_checked=result.rows_checked,
+        first_break_at=result.first_break_at,
+        reason=result.reason,
+        scope_user_ids=result.scope_user_ids,
+        checked_user_count=len(result.scope_user_ids),
+        as_of=result.as_of,
     )

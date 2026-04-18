@@ -273,10 +273,15 @@ def _seed_memory_policies(db: Session) -> None:
     """
     from app.models.policy import Policy
 
+    _WANTED_MEMORY_POLICY_NAMES = (
+        "memory-default-deny",
+        "memory-allow-preference-write",
+        "memory-allow-integrity-read",
+    )
     existing = {
         row.name
         for row in db.query(Policy.name)
-        .filter(Policy.name.in_(["memory-default-deny", "memory-allow-preference-write"]))
+        .filter(Policy.name.in_(_WANTED_MEMORY_POLICY_NAMES))
         .all()
     }
 
@@ -300,6 +305,20 @@ def _seed_memory_policies(db: Session) -> None:
             risk_level="low",
             required_approvals="0",
             priority=10,
+        ),
+        # Integrity verification is a read-only audit primitive. Default
+        # allow at low risk so compliance reviewers and the /dashboard
+        # integrity page "just work" out of the box; operators who need
+        # tighter control can add a higher-priority deny.
+        Policy(
+            name="memory-allow-integrity-read",
+            description="Allow read-only hash-chain verification of belief memory",
+            action_pattern="memory:read:integrity",
+            resource_pattern="*",
+            decision="allow",
+            risk_level="low",
+            required_approvals="0",
+            priority=20,
         ),
     ]
 

@@ -30,11 +30,9 @@ runs standalone:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import UTC
 from typing import Any
 
 import pytest
@@ -215,56 +213,25 @@ def _run_one(db: Session, user_id: str, spec: AttemptSpec) -> WriteOutcome:
     return write_belief(draft, db)
 
 
-def _recompute_hash(row: Belief) -> str:
-    """Re-derive `belief_hash` from the row's own fields + its stored
-    `prev_hash`. Matches `_compute_belief_hash` in writer.py byte-for-byte.
-
-    SQLite strips tzinfo on round-trip even for `DateTime(timezone=True)`
-    columns; the writer hashed the original tz-aware isoformat (with a
-    `+00:00` suffix), so we re-attach UTC before calling isoformat()
-    when the stored row came back naive. See
-    `app/core/memory/forgetting.py` for the matching convention on
-    the decay path.
-    """
-    value_json = json.dumps(row.value, sort_keys=True, default=str)
-    observed = row.observed_at
-    if observed.tzinfo is None:
-        observed = observed.replace(tzinfo=UTC)
-    # writer.py passes `prev_hash` verbatim into `_compute_belief_hash`
-    # — it's always a non-empty string (either "genesis" or a prior's
-    # sha256). Do NOT coerce to "" here or the first row stops verifying.
-    payload = "|".join(
-        [
-            row.id,
-            row.prev_hash,
-            row.entity,
-            row.predicate,
-            value_json,
-            row.source_type,
-            row.source_trace_id or "",
-            observed.isoformat(),
-        ]
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 def _verify_chain(db: Session, user_id: str) -> bool:
-    """Walk the per-user chain oldest-first. Every row must link
-    to the previous row's hash and its own hash must reproduce."""
-    rows = db.query(Belief).filter(Belief.user_id == user_id).order_by(Belief.observed_at.asc(), Belief.id.asc()).all()
-    prev = None
-    # Writer seeds the chain with the sentinel "genesis" (see
-    # `_HASH_GENESIS` in writer.py); `prev_hash` is that value for the
-    # first row in a per-user chain and the previous row's
-    # `belief_hash` thereafter. Never NULL on a live chain.
-    for row in rows:
-        expected_prev = prev.belief_hash if prev is not None else "genesis"
-        if row.prev_hash != expected_prev:
-            return False
-        if row.belief_hash != _recompute_hash(row):
-            return False
-        prev = row
-    return True
+    """Delegate to the production hash-chain verifier.
+
+    Previously this module shipped its own `_recompute_hash` +
+    `_verify_chain` copies. Week 4 promoted that logic to
+    `app.core.memory.integrity` so dashboards / CLI / external
+    auditors can call the same primitive. Keeping an independent
+    implementation here would be a drift hazard: if the writer ever
+    changes the hash payload, only one of the two would get updated
+    and the benchmark would silently drift away from what production
+    actually enforces.
+
+    Kept as a thin wrapper (not replaced by direct `verify_chain`
+    calls) so the benchmark's tamper test + schema asserts still
+    read cleanly against a boolean contract.
+    """
+    from app.core.memory.integrity import verify_chain as _production_verify
+
+    return _production_verify(db, user_id=user_id).verified
 
 
 def _verify_causal_links(result: ContradictionQAResult, db: Session) -> bool:
