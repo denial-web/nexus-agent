@@ -32,6 +32,25 @@ class ScanResult:
     details: dict = field(default_factory=dict)
 
 
+def is_tool_call_blocked(result: ScanResult) -> bool:
+    """Return True if `result` should block an MCP `tools/call` payload.
+
+    Free-text prompts have a safety fallback — `harden_prompt` strips
+    flagged fragments before they reach the LLM — so FLAG is a viable
+    "suspected, mitigated" verdict there. Tool-call arguments have no
+    such fallback: the MCP proxy either forwards the literal payload
+    or raises. At that boundary, any non-PASS verdict is a detected
+    attack and the safest action is to reject.
+
+    Using one helper keeps the proxy and the
+    tests/eval/tool_injection_redteam.py benchmark in agreement about
+    what "blocked at the tool-call boundary" means — changing the
+    policy (e.g. allowing FLAG through for a specific backend) is
+    then a single-site edit instead of a grep-and-fix across files.
+    """
+    return result.verdict in (Verdict.BLOCK, Verdict.FLAG)
+
+
 # ── Unicode normalization ──────────────────────────────────────────
 
 _ZERO_WIDTH = re.compile(
@@ -119,6 +138,33 @@ INJECTION_PATTERNS = [
     r"تجاهل.{0,6}(التعليمات|القواعد|الأوامر)\s*(السابقة|القديمة)",
     # Hindi
     r"(पिछले|पहले).{0,6}(निर्देश|नियम).{0,6}(अनदेखा|भूल\s*जाओ)",
+    # Jailbreak mode keywords — narrow patterns, high precision. Words
+    # like "jailbreak mode", "DAN mode enabled", "no restrictions" are
+    # hallmarks of attack payloads and essentially never appear in
+    # legitimate prompts. Extends the existing "DAN mode" single-pattern.
+    r"jailbreak\s*(mode|enabled|active|activated|on)",
+    r"(no\s+restrictions|unrestricted\s+mode)\s*(enabled|active|on)?[\s.,!:;]",
+    # Secret-exfil intent — attacker tells the agent to dump credentials.
+    # Anchored on both a verb (print/dump/reveal/leak/show) AND a
+    # credential noun, with optional quantifier in between. Matches
+    # "print all environment variables", "reveal my api keys", "dump
+    # passwords", but NOT neutral phrases like "environment variables
+    # are important" or "how do I print a list in Python".
+    (
+        r"(print|dump|output|reveal|leak|show|expose)"
+        r"\s+(all\s+|my\s+|the\s+)?"
+        r"(environment\s+variables?|env\s+vars?|api[_ -]?keys?|"
+        r"secret[s]?|password[s]?|credentials?|tokens?)"
+    ),
+    # Sensitive-path read — classic post-exploit commands. We match the
+    # PATH token rather than the verb so equivalent forms (`read`,
+    # `print`, `open`, `cat`) all get caught.
+    r"/etc/(passwd|shadow|sudoers)\b",
+    r"\.ssh/(id_rsa|id_ed25519|authorized_keys)\b",
+    # Shell-execution smuggling — the canonical "pipe to shell" attack
+    # and destructive-root commands.
+    r"\brm\s+-rf\s+/",
+    r"(curl|wget)\s+\S+\s*\|\s*(bash|sh|zsh|ksh)\b",
 ]
 
 ESCALATION_PHRASES = [

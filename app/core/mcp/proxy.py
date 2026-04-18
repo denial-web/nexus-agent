@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.core.covernor.policy_engine import evaluate_action
-from app.core.immune.scanner import scan_input
+from app.core.immune.scanner import is_tool_call_blocked, scan_input
 from app.core.mcp.config import McpBackend, load_backends
 from app.db import SessionLocal
 from app.services.integrity import compute_trace_hash
@@ -173,7 +173,11 @@ class GovernedMcpTool(Tool):
                 _persist_mcp_trace(
                     backend_name=backend.name,
                     remote_tool_name=remote,
-                    prompt_payload=json.dumps({"tool": remote, "arguments": arguments}, default=str),
+                    prompt_payload=json.dumps(
+                        {"tool": remote, "arguments": arguments},
+                        default=str,
+                        ensure_ascii=False,
+                    ),
                     response_text=None,
                     status="blocked",
                     immune_verdict="pass",
@@ -184,7 +188,15 @@ class GovernedMcpTool(Tool):
                 )
             raise ToolError(msg)
 
-        payload = json.dumps({"backend": backend.name, "tool": remote, "arguments": arguments}, default=str)[:50000]
+        # ensure_ascii=False so CJK/Cyrillic/Arabic injection text reaches
+        # the scanner literally. Without it, `json.dumps` escapes non-ASCII
+        # to `\uXXXX`, which silently bypasses all multi-language injection
+        # patterns — a real hole surfaced by tests/eval/tool_injection_redteam.py.
+        payload = json.dumps(
+            {"backend": backend.name, "tool": remote, "arguments": arguments},
+            default=str,
+            ensure_ascii=False,
+        )[:50000]
         scan = scan_input(payload)
         immune_verdict = scan.verdict.value
         immune_details = {
@@ -193,7 +205,10 @@ class GovernedMcpTool(Tool):
             "triggers": list(scan.triggers) if scan.triggers else [],
         }
 
-        if immune_verdict == "block":
+        # Tool calls have no hardening fallback (see is_tool_call_blocked
+        # docstring). FLAG at this boundary means "detected injection
+        # signal, nothing will strip it" — reject.
+        if is_tool_call_blocked(scan):
             if _should_trace(allowed=False, audited_all=settings.MCP_AUDIT_ALL):
                 _persist_mcp_trace(
                     backend_name=backend.name,
@@ -201,7 +216,7 @@ class GovernedMcpTool(Tool):
                     prompt_payload=payload,
                     response_text=None,
                     status="blocked",
-                    immune_verdict="block",
+                    immune_verdict=immune_verdict,
                     immune_details=immune_details,
                     governance_decision=None,
                     governance_policy_id=None,
