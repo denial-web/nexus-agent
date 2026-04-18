@@ -6,33 +6,31 @@
 
 ## 0. Resume-Here (Agent Orientation)
 
-**Current status:** Phase 12A Week 1 **code-complete** (~95% done).
-Shipped so far: config flags, two-tier regression tripwire (green), golden
-fixture captured, `Belief` model + Alembic migration (`8a4579763b4d`, up/down/up
+**Current status:** Phase 12A Week 1 **DONE**. Week 2 not started.
+Shipped: config flags, two-tier regression tripwire (green + self-verified via
+golden mutation + CI-gated as a dedicated `memory-regression` job), golden
+fixture, `Belief` model + Alembic migration (`8a4579763b4d`, up/down/up
 verified), `app/core/memory/{confidence,skepticism,retrieval,writer,extractor}.py`
-+ 69 passing memory unit/integration tests. Covernor `memory:*` namespace seeded
-in `app/main.py` (global default-deny + scoped allow for `memory:write:preference`).
-Baseline test count has grown from 1181 → **1250 green, 0 skipped**.
++ 69 passing memory unit/integration tests, Covernor `memory:*` namespace
+seeded in `app/main.py` (global default-deny + scoped allow for
+`memory:write:preference`). Baseline test count has grown from 1181 →
+**1250 green, 0 skipped**.
 
-**Next concrete action (pick up here after reboot):**
-1. `git pull` (the Week 1 work has been committed to master as part of the
-   "Phase 12A Week 1" commit — all files in `app/core/memory/`,
-   `app/models/belief.py`, `alembic/versions/8a4579763b4d_*.py`, the config
-   flags, policy seeding in `app/main.py`, and the six new `tests/test_memory_*.py`
-   files are on-disk and in history).
-2. Run `pytest tests/ -q` — must show `1250 passed, 0 skipped`. If not, stop
-   and read `tests/test_memory_regression.py` output before doing anything
-   else.
-3. The ONE remaining Week 1 task is wiring the regression tripwire into CI:
-   add a job (or step) to `.github/workflows/` that runs `pytest
-   tests/test_memory_regression.py -v` as a required check on every PR that
-   touches `app/`. Everything the tripwire needs is already in the repo —
-   this is a CI-only change.
-4. After CI wiring lands, close Week 1 and start Week 2 (section 3, "Week 2 —
-   Bitemporal + Causal + Forgetting + Agent-Loop Wiring"). The first Week 2
-   task is the additive migration for `traces.beliefs_formed`,
-   `episodes.beliefs_used`, `episodes.beliefs_formed`. Do NOT touch existing
-   columns.
+**Next concrete action (Week 2 kickoff):**
+1. Pull latest master. Run `pytest tests/ -q` — must show `1250 passed, 0
+   skipped`. If the `memory-regression` CI job is red on your branch, STOP
+   and read the Tier B diff before doing anything else — the golden
+   fixture is the pre-memory behavioral contract.
+2. Start Week 2 at section 3, "Week 2 — Bitemporal + Causal + Forgetting +
+   Agent-Loop Wiring". First task: additive Alembic migration for
+   `traces.beliefs_formed`, `episodes.beliefs_used`,
+   `episodes.beliefs_formed`. These are JSON columns storing belief-id
+   arrays. DO NOT touch existing columns — additive only, per section 1's
+   non-negotiable rails.
+3. Then `_retrieve_beliefs()` in `app/agent/agent_loop.py` (mirror the
+   existing `_retrieve_episodes` pattern at lines 61-92) + post-answer
+   extractor→writer wiring. `/v1/memory/*` API and forgetting daemon
+   follow.
 
 **What this document is:**
 - Authoritative source of truth for the Nexus Flagship work stream
@@ -385,11 +383,11 @@ Do NOT plan Phase 13 timing assuming month-3 revenue. That's fantasy for a solo 
 
 ### Phase 12A — Foundation (2 calendar weeks)
 
-**Week 1 — Regression Tripwire + Belief Foundation**
+**Week 1 — Regression Tripwire + Belief Foundation (DONE)**
 - [x] `MEMORY_ENABLED=False` flag + 5 new config vars (plan had 3; added 2 bonus retrieval/extractor knobs)
 - [x] Golden fixture captured from main branch ([tests/fixtures/pipeline_golden.json](tests/fixtures/pipeline_golden.json))
-- [x] `tests/test_memory_regression.py` — Tier A (4 tests) + Tier B (1 test) both green, tripwire self-verified via golden mutation
-- [ ] CI wiring for regression gate (`.github/workflows/`)
+- [x] `tests/test_memory_regression.py` — Tier A (5 tests) + Tier B (1 test) both green, tripwire self-verified via golden mutation
+- [x] CI wiring for regression gate — dedicated `memory-regression` job in [.github/workflows/ci.yml](.github/workflows/ci.yml), runs after `lint`, SQLite-only (behavioral contract, not dialect portability), explicitly exports `MEMORY_ENABLED=false`, surfaces as its own status check on PRs, re-verified tripwire behavior by mutating the golden and confirming Tier B fails
 - [x] `app/models/belief.py` + register + additive migration (revision `8a4579763b4d`)
 - [x] `app/core/memory/confidence.py` (Beta primitive) + 13 tests
 - [x] `app/core/memory/extractor.py` (LLM-backed JSON triple extraction, version-stamped) + 18 tests
@@ -512,5 +510,6 @@ Do NOT plan Phase 13 timing assuming month-3 revenue. That's fantasy for a solo 
 - **2026-04-17 (week 1 finale)** — Extractor version constant `EXTRACTOR_VERSION="v1.0.0-preference"` is stored on every belief so stale beliefs can be re-labeled when the prompt or JSON schema changes. Bump on any behavioural change. This is the memory-system analogue of the critic_registry `version` column.
 - **2026-04-17 (week 1 finale)** — Covernor `memory:*` seeding uses TWO policies, not a single conditional one: (1) `memory-default-deny` at priority 100 matching `memory:write:*`, (2) `memory-allow-preference-write` at priority 10 matching `memory:write:preference`. Lower priority wins, so preferences resolve to allow while everything else falls through to deny. This keeps the intent readable in the DB and lets operators audit/disable the scoped allow without touching the namespace-wide deny.
 - **2026-04-17 (week 1 finale)** — Writer returns a typed `WriteOutcome` dataclass with `status` literal (`accepted` / `superseded` / `rejected` / `needs_evidence` / `denied_by_policy` / `skipped_flag_off` / `error`) and embeds the full `SkepticismDecision` + `PolicyDecision` in the outcome. This gives the upcoming `/v1/memory/beliefs` API a single object to surface for every write attempt, including the ones that got rejected — critical for the "explain why you didn't store this" story that OpenClaw and Hermes don't have.
+- **2026-04-18 (week 1 close-out)** — Regression tripwire runs as a **dedicated CI job** (`memory-regression`), not a step inside `test-sqlite`. Rationale: the two-tier contract is the single highest-signal safety gate for the entire memory programme — if it's buried in a 1250-test output the signal is lost. Dedicated job surfaces as its own GitHub status check, fails fast (~15s vs full suite), explicitly exports `MEMORY_ENABLED=false` (belt-and-braces beyond the default), and stays SQLite-only because the tripwire is a behavioral contract, not a dialect portability test (full `test-postgres` still exercises it as part of the complete suite). Job placed after `lint`, in parallel with `test-sqlite` / `test-postgres`. Self-verified in this session by mutating the golden fixture and confirming Tier B fails.
 
 Add new decisions as they are made. Never edit past entries.
