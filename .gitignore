@@ -31,6 +31,8 @@ data/finetune/
 data/reports/
 data/traces/
 
+bench-reports/
+
 *.log
 .DS_Store
 node_modules/
