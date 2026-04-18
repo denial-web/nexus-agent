@@ -62,7 +62,7 @@ These are the four things Nexus does that nothing else in the OSS agent ecosyste
 Import a SKILL.md from ClawHub and run it. Every step passes through the immune scanner and Covernor. A hostile skill that tries `cat /etc/passwd > leaked.txt` imports cleanly (matching OpenClaw's flow) but is blocked *at execution step*, not just at static import.
 
 ```bash
-nexus skills import --url https://clawhub.ai/skills/data-summarizer/SKILL.md
+nexus skills import --from-url https://clawhub.ai/skills/data-summarizer/SKILL.md
 nexus skills list
 nexus skills execute <skill_id>
 # Full audit chain visible at /dashboard/traces
@@ -322,8 +322,8 @@ curl -X POST http://localhost:9000/v1/skills/import \
   -F "file=@./my-skill.md"
 
 # Via CLI
-nexus skills import --url https://clawhub.ai/skills/...
-nexus skills import --file ./my-skill.md
+nexus skills import --from-url https://clawhub.ai/skills/...
+nexus skills import ./my-skill.md
 ```
 
 **Execute a skill (every step passes through Covernor):**
