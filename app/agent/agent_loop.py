@@ -571,6 +571,21 @@ def run_agent(
         messages = list(resume_state.get("messages", []))
         step_index = int(resume_state.get("step_index", 0))
         step_critic_avgs = list(resume_state.get("step_critic_avgs", []))
+        # Belief retrieval is intentionally skipped on resume (the system
+        # prompt already reflects the initial run via ``messages``), but
+        # the ids recorded on the pending trace row are part of the audit
+        # trail and must survive the pause/resume cycle. Restore them
+        # onto the fresh AgentRunResult so _update_trace_final and
+        # _episode_persist don't overwrite the saved list with NULL.
+        if db_session:
+            from app.models.trace import Trace as _PausedTrace
+
+            paused = db_session.query(_PausedTrace).filter_by(id=trace_id).first()
+            if paused:
+                if paused.beliefs_used:
+                    result.beliefs_used = list(paused.beliefs_used)
+                if paused.beliefs_formed:
+                    result.beliefs_formed = list(paused.beliefs_formed)
         pending = resume_state.get("pending_tool")
         if pending:
             tool_name = str(pending["tool"])

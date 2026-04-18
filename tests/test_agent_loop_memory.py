@@ -429,3 +429,107 @@ def test_run_agent_memory_off_leaves_columns_null(
     ep = db_session.query(Episode).filter_by(trace_id=out.trace_id).one()
     assert ep.beliefs_used is None
     assert ep.beliefs_formed is None
+
+
+def test_resume_preserves_beliefs_used_audit_trail(
+    tmp_path: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the initial run saves ``beliefs_used`` on the trace row
+    when it pauses for governance approval. Resuming the run must NOT
+    clobber that list with NULL just because the resume path (correctly)
+    skips belief retrieval. The beliefs that influenced the initial
+    reasoning are part of the audit trail and must persist through
+    the pause/resume cycle.
+    """
+    import hashlib
+    import uuid
+
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "")
+    monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", True)
+    monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
+    monkeypatch.setattr(
+        "app.agent.agent_loop.settings.AGENT_WORKSPACE", str(tmp_path)
+    )
+    _seed_agent_and_memory_policies(db_session)
+    _reset_provider()
+
+    # The extractor must not fire in this minimal final-answer-only resume
+    # — if it does, beliefs_formed would mask the beliefs_used regression.
+    def _no_drafts(**_: object) -> list[BeliefDraft]:
+        return []
+
+    monkeypatch.setattr(
+        "app.core.memory.extractor.extract_beliefs", _no_drafts
+    )
+
+    trace_id = uuid.uuid4().hex
+    session_id = uuid.uuid4().hex
+    saved_beliefs = ["b-prior-1", "b-prior-2"]
+
+    # Simulate the state left behind by the initial run's pause at
+    # require_approval: a Trace row with status=pending_approval carrying
+    # the beliefs that were retrieved and injected into the system prompt.
+    prompt = "test prompt"
+    prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
+    paused_row = Trace(
+        id=trace_id,
+        session_id=session_id,
+        sequence=0,
+        prompt=prompt,
+        prompt_hash=prompt_hash,
+        immune_verdict="pass",
+        status="pending_approval",
+        run_mode="agent",
+        prev_hash="genesis",
+        beliefs_used=list(saved_beliefs),
+    )
+    db_session.add(paused_row)
+    db_session.commit()
+
+    # Resume: step_index=1 drives the mock planner straight to final_answer
+    # on the first iteration, so the loop completes without any tool call.
+    resume_state = {
+        "trace_id": trace_id,
+        "session_id": session_id,
+        "messages": [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": '{"action":"final_answer","content":"done"}'},
+        ],
+        "step_index": 1,
+        "self_corrections": 0,
+        "step_critic_avgs": [],
+        "pending_final": True,
+    }
+
+    out = run_agent(
+        prompt,
+        model_id="mock",
+        db_session=db_session,
+        resume_state=resume_state,
+    )
+    assert out.status == "completed", out.error
+
+    # The audit trail must still carry the beliefs that influenced the
+    # initial reasoning. Before the fix, _update_trace_final overwrote
+    # row.beliefs_used with NULL because result.beliefs_used defaulted
+    # to [] on the fresh resume AgentRunResult.
+    trace = db_session.query(Trace).filter_by(id=trace_id).one()
+    assert trace.beliefs_used == saved_beliefs, (
+        f"beliefs_used was clobbered on resume: "
+        f"expected {saved_beliefs}, got {trace.beliefs_used!r}"
+    )
+
+    # The returned AgentRunResult must also reflect the beliefs used
+    # so that _episode_persist records them on the Episode row.
+    assert list(out.beliefs_used) == saved_beliefs, (
+        f"AgentRunResult.beliefs_used was not restored on resume: "
+        f"got {out.beliefs_used!r}"
+    )
+    ep = db_session.query(Episode).filter_by(trace_id=trace_id).one()
+    assert ep.beliefs_used == saved_beliefs, (
+        f"Episode.beliefs_used lost on resume: got {ep.beliefs_used!r}"
+    )
