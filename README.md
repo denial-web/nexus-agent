@@ -366,6 +366,8 @@ What Nexus adds on top of the model:
 - **Hash-chained audit** — every generation, tool call, and belief write becomes an auditable row.
 - **Learning loop** — `Episode` + `Belief` + `Skill` reward-tracking means a Hermes deployment actually improves across runs.
 
+Full operator guide — including the plain-JSON tool-call protocol, running Hermes via vLLM / TGI / LiteLLM through the Ollama route, model selection guidance by deployment size, and troubleshooting — lives in [docs/hermes_integration.md](docs/hermes_integration.md).
+
 ---
 
 ## Digital Employee (agentic mode)
