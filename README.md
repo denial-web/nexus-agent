@@ -45,6 +45,8 @@ Nexus Agent is not another prompt-chaining framework. It is a **security and gov
 
 **[See the benchmark numbers](docs/benchmarks.md)** — six nightly benchmarks covering bitemporal recall, contradiction handling, causal derivation, tool-call injection, skill composition (with a hostile probe), and end-to-end memory uplift in the agent loop. All six pass their exit gates on the current main.
 
+**[Memory architecture](docs/memory.md)** — how beliefs are written, retrieved, and audited under the same zero-trust contract as every other Nexus surface (bitemporal + Beta confidence + causal DAG + hash-chained integrity).
+
 ---
 
 ## Table of Contents
