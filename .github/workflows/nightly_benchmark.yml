@@ -1,0 +1,261 @@
+name: Nightly Benchmarks
+
+# Runs the Phase 12B benchmarks in `tests/eval/` as standalone CLI
+# scripts (each `--json`), uploads the canonical JSON reports as
+# artifacts, and posts a summary table to the PR / job summary. These
+# benchmarks ALSO run as ordinary pytest tests in the main CI
+# (see ci.yml `test-sqlite` → collects `tests/eval/*` via the
+# `python_files` entry in pyproject.toml), so the hard exit gate is
+# already enforced there. This workflow's job is trend tracking,
+# public-facing numbers for docs/benchmarks.md, and cheap early
+# regression signal on PRs that touch the memory / scanner paths.
+#
+# Keep this workflow non-gating. If a benchmark CLI fails it is a
+# reporting signal, not a merge-blocker — the pytest test version is
+# what blocks merges.
+
+on:
+  schedule:
+    # 02:15 UTC daily. Offset a few minutes past the hour so we don't
+    # dogpile GitHub's free-tier scheduler with every other repo that
+    # picked a round hour.
+    - cron: "15 2 * * *"
+  workflow_dispatch:
+  pull_request:
+    # Only run on PRs that touch code the benchmarks exercise. Keeps
+    # the noise floor low and avoids running the same workflow on
+    # every doc-only PR.
+    paths:
+      - "tests/eval/**"
+      - "app/core/memory/**"
+      - "app/core/immune/**"
+      - "app/core/mcp/**"
+      - "app/agent/**"
+      - "app/models/belief.py"
+      - ".github/workflows/nightly_benchmark.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    # Don't let a flaky benchmark wedge the runner for hours.
+    timeout-minutes: 15
+
+    env:
+      # Every tests/eval/* CLI sets MEMORY_ENABLED for itself in
+      # process, but we set it here too so any helper imports see the
+      # right value. The regression tripwire (ci.yml) proves this
+      # doesn't change default behavior when flipped off.
+      MEMORY_ENABLED: "true"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Cache pip packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run migrations (SQLite)
+        # temporal_qa and contradiction_qa don't touch the developer
+        # DB when invoked as CLI (they create an in-memory SQLite),
+        # but causal_qa uses the `db_session` fixture path — which
+        # means the CLI version also spins up its own in-memory DB.
+        # Running migrations here is defense-in-depth for any future
+        # benchmark that attaches to a real engine.
+        run: alembic upgrade head
+
+      - name: Prepare reports directory
+        run: mkdir -p bench-reports
+
+      # One step per benchmark so failures are individually
+      # attributable in the Actions UI. `continue-on-error: true` keeps
+      # the rest of the matrix running even if one benchmark regresses
+      # — we want the full picture in the PR comment, not a bail-on-
+      # first-failure. The pytest path in ci.yml is still the gate.
+
+      - name: Benchmark — temporal_qa
+        id: bench_temporal
+        continue-on-error: true
+        run: |
+          python -m tests.eval.temporal_qa --seed 1 --transitions 3 --json \
+            | tee bench-reports/temporal_qa.json
+
+      - name: Benchmark — contradiction_qa
+        id: bench_contradiction
+        continue-on-error: true
+        run: |
+          python -m tests.eval.contradiction_qa --json \
+            | tee bench-reports/contradiction_qa.json
+
+      - name: Benchmark — causal_qa
+        id: bench_causal
+        continue-on-error: true
+        run: |
+          python -m tests.eval.causal_qa --json \
+            | tee bench-reports/causal_qa.json
+
+      - name: Benchmark — tool_injection_redteam
+        id: bench_redteam
+        continue-on-error: true
+        run: |
+          python -m tests.eval.tool_injection_redteam --json \
+            | tee bench-reports/tool_injection_redteam.json
+
+      - name: Benchmark — skill_composition
+        id: bench_skillcomp
+        continue-on-error: true
+        run: |
+          python -m tests.eval.skill_composition --json \
+            | tee bench-reports/skill_composition.json
+
+      # Agent-vs-Nexus uplift. Mock-provider mode is deterministic and
+      # is the gating signal; real-provider mode is informational only
+      # (emits a skipped row when no LLM key is configured in CI).
+      - name: Benchmark — agent_benchmark (mock)
+        id: bench_agent_mock
+        continue-on-error: true
+        run: |
+          python -m tests.eval.agent_benchmark --provider mock --json \
+            | tee bench-reports/agent_benchmark.json
+
+      - name: Benchmark — agent_benchmark (real, informational)
+        id: bench_agent_real
+        continue-on-error: true
+        run: |
+          python -m tests.eval.agent_benchmark --provider real --json \
+            | tee bench-reports/agent_benchmark_real.json
+
+      - name: Build summary table
+        id: build_summary
+        if: always()
+        run: |
+          python - <<'PY' > bench-reports/summary.md
+          import json
+          import os
+          from pathlib import Path
+
+          # The `passes_exit_gate` boolean is the uniform gate signal
+          # across every benchmark (locked by each benchmark's
+          # `test_*_schema_stable` test). The headline metric is shown
+          # alongside for scoreboard context. Adding a new benchmark:
+          # ensure its JSON exposes `passes_exit_gate` and a numeric
+          # metric key, then append a row below. That's it.
+          SPEC = [
+              ("temporal_qa.json", "accuracy"),
+              ("contradiction_qa.json", "accuracy"),
+              ("causal_qa.json", "root_count"),  # headline metric; gate is passes_exit_gate
+              ("tool_injection_redteam.json", "block_rate"),
+              ("skill_composition.json", "success_rate"),
+              ("agent_benchmark.json", "uplift"),
+          ]
+
+          rows = ["| Benchmark | Headline | Value | Passes gate |",
+                  "|---|---|---|---|"]
+          all_green = True
+          for fname, metric_key in SPEC:
+              path = Path("bench-reports") / fname
+              if not path.exists():
+                  rows.append(
+                      f"| `{fname}` | (missing report) | n/a | :x: |"
+                  )
+                  all_green = False
+                  continue
+              try:
+                  body = json.loads(path.read_text())
+              except Exception as e:
+                  rows.append(
+                      f"| `{fname}` | (parse error: {e}) | n/a | :x: |"
+                  )
+                  all_green = False
+                  continue
+              name = body.get("benchmark", fname)
+              passed = bool(body.get("passes_exit_gate", False))
+              value = body.get(metric_key)
+              if value is None:
+                  value_str = "n/a"
+              elif isinstance(value, float):
+                  value_str = f"{value:.4f}"
+              else:
+                  value_str = str(value)
+              mark = ":white_check_mark:" if passed else ":x:"
+              rows.append(
+                  f"| `{name}` | `{metric_key}` | `{value_str}` | {mark} |"
+              )
+              if not passed:
+                  all_green = False
+
+          banner = (
+              ":white_check_mark: All benchmarks green"
+              if all_green else ":rotating_light: One or more benchmarks below gate"
+          )
+          print("## Nexus Nightly Benchmarks\n")
+          print(banner + "\n")
+          print("\n".join(rows))
+          print()
+          print(
+              "_Hard exit gates are enforced in the main `test-sqlite` CI job. "
+              "This workflow is for trend tracking + public-facing numbers._"
+          )
+
+          # Surface overall status to the job outputs so a downstream
+          # step (or a future badge) can consume it.
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"all_green={'true' if all_green else 'false'}\n")
+          PY
+
+      - name: Append summary to job summary
+        if: always()
+        run: cat bench-reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-benchmark-reports
+          path: bench-reports/
+          retention-days: 30
+
+      - name: Post / update PR comment
+        # Only on PRs, not on cron / workflow_dispatch. Uses the
+        # built-in GITHUB_TOKEN — no third-party action required.
+        # The comment is identified by a hidden marker so reruns
+        # update the existing comment instead of stacking new ones.
+        if: github.event_name == 'pull_request' && always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          MARKER: "<!-- nexus-nightly-benchmark-comment -->"
+        run: |
+          body="$(printf '%s\n\n' "$MARKER"; cat bench-reports/summary.md)"
+
+          # Find an existing bot comment with our marker.
+          existing_id="$(
+            gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+              --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" \
+              | head -n 1
+          )"
+
+          if [ -n "$existing_id" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$existing_id" \
+              -f body="$body"
+          else
+            gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" \
+              -f body="$body"
+          fi
