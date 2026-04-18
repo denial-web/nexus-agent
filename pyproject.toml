@@ -40,6 +40,22 @@ disable_error_code = [
 module = "tests.*"
 ignore_errors = true
 
+[tool.pytest.ini_options]
+# Default discovery is `test_*.py`. Phase 12B benchmarks under
+# `tests/eval/` use category-named files (temporal_qa.py, causal_qa.py,
+# *_redteam.py, *_composition.py) so CI collects them without forcing
+# the `test_` prefix that would obscure the benchmark-vs-test distinction
+# in docs/benchmarks.md. Scope-limited to patterns that only appear in
+# tests/eval/ so the rest of the suite is unaffected.
+testpaths = ["tests"]
+python_files = [
+    "test_*.py",
+    "*_qa.py",
+    "*_benchmark.py",
+    "*_redteam.py",
+    "*_composition.py",
+]
+
 [tool.coverage.run]
 source = ["app"]
 omit = ["app/templates/*", "app/static/*"]
