@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Memory Integrity — Nexus Agent{% endblock %}
+{% block content %}
+<h1>Memory Integrity</h1>
+<p class="text-dim" style="margin-top: -8px; margin-bottom: 24px;">
+  Verify the tamper-evident hash chain over every belief row. Broken chains
+  return a 200 with <span class="mono">verified=false</span> — a finding, not an error.
+</p>
+
+{% if not enabled %}
+<div class="card" style="border-color: var(--yellow);">
+  <h2 style="margin-top: 0;">Memory subsystem disabled</h2>
+  <p>
+    <span class="badge badge-flag">MEMORY_ENABLED=false</span>
+    There is no chain to verify on this deployment.
+  </p>
+</div>
+{% else %}
+
+<div class="stats">
+  <div class="stat">
+    <div class="value">{{ stats.total_live }}</div>
+    <div class="label">Live Beliefs</div>
+  </div>
+  <div class="stat">
+    <div class="value" style="color: var(--text-dim);">{{ stats.total_tombstoned }}</div>
+    <div class="label">Tombstoned</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ stats.distinct_chains }}</div>
+    <div class="label">Distinct Chains</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top: 0;">Run verification</h2>
+  <form method="post" action="/dashboard/memory/integrity/verify">
+    {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% endif %}
+
+    <div class="form-group">
+      <label for="user_id">User ID (optional)</label>
+      <input type="text" id="user_id" name="user_id" placeholder="alice" style="width: 320px;">
+      <div class="text-sm text-dim" style="margin-top: 4px;">
+        Leave blank and keep "All chains" checked to run the audit-all sweep.
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>
+        <input type="checkbox" name="scope_all" value="true" checked>
+        All chains (ignored if User ID is set)
+      </label>
+      <div class="text-sm text-dim" style="margin-top: 4px;">
+        Unchecked with blank user id ⇒ verify only the NULL-user (shared/system) chain.
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="as_of">As-of timestamp (optional)</label>
+      <input type="text" id="as_of" name="as_of"
+             placeholder="2026-04-17T00:00:00+00:00" style="width: 320px;">
+      <div class="text-sm text-dim" style="margin-top: 4px;">
+        ISO 8601, timezone-aware. Leave blank to verify through the most recent row.
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Run Verification</button>
+  </form>
+</div>
+
+{% if error %}
+<div class="card" style="border-color: var(--red); margin-top: 16px;">
+  <h2 style="margin-top: 0; color: var(--red);">Verification failed to run</h2>
+  <p>{{ error }}</p>
+</div>
+{% endif %}
+
+{% if result %}
+<div class="card" style="margin-top: 16px;
+     border-color: {% if result.verified %}var(--green){% else %}var(--red){% endif %};">
+  <h2 style="margin-top: 0;">
+    Result
+    {% if result.verified %}
+    <span class="badge badge-pass">verified</span>
+    {% else %}
+    <span class="badge badge-block">broken</span>
+    {% endif %}
+  </h2>
+
+  <dl class="detail-grid">
+    <dt>Scope</dt>
+    <dd class="mono">{{ scope_label }}</dd>
+
+    <dt>Rows checked</dt>
+    <dd class="mono">{{ result.rows_checked }}</dd>
+
+    <dt>Chains walked</dt>
+    <dd class="mono">{{ result.scope_user_ids | length }}</dd>
+
+    {% if result.as_of %}
+    <dt>As of</dt>
+    <dd class="mono">{{ result.as_of.isoformat() }}</dd>
+    {% endif %}
+
+    {% if not result.verified %}
+    <dt>First break at</dt>
+    <dd class="mono" style="color: var(--red);">{{ result.first_break_at }}</dd>
+    <dt>Reason</dt>
+    <dd style="color: var(--red);">{{ result.reason }}</dd>
+    {% endif %}
+  </dl>
+
+  {% if result.scope_user_ids %}
+  <details style="margin-top: 12px;">
+    <summary class="text-sm text-dim" style="cursor: pointer;">Walked chains</summary>
+    <ul style="margin-top: 8px; padding-left: 20px;">
+      {% for uid in result.scope_user_ids %}
+      <li class="mono text-sm">
+        {% if uid is none %}<em>NULL (shared/system)</em>{% else %}{{ uid }}{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

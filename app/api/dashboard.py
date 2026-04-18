@@ -14,9 +14,12 @@ from sqlalchemy.orm import Session
 from starlette.responses import Response
 
 from app.config import settings
+from app.core.covernor.policy_engine import evaluate_action
+from app.core.memory.integrity import verify_chain
 from app.core.training.calibration import get_ece_tracker
 from app.db import get_db
 from app.models.approval_log import ApprovalRequest
+from app.models.belief import Belief
 from app.models.labeling_queue import LabelingItem
 from app.models.skill import Skill
 from app.models.trace import Trace
@@ -483,3 +486,228 @@ def toggle_skill_dashboard(
     logger.info("Dashboard toggled skill '%s' enabled=%s", sanitize_for_log(skill.name), skill.enabled)
 
     return RedirectResponse(url=f"/dashboard/skills/{skill_id}", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Memory dashboard (Phase 12B Week 4).
+#
+# Two pages:
+#   GET  /dashboard/memory              — subsystem overview + recent beliefs
+#   GET  /dashboard/memory/integrity    — hash-chain verification UI
+#   POST /dashboard/memory/integrity/verify — CSRF-protected chain check
+#
+# The integrity page is intentionally split from the overview because
+# running the verifier walks every row in the DB and is the single most
+# user-visible proof behind the "tamper-evident audit trail" claim in
+# the project pitch. Keeping it on its own URL makes it screenshot- and
+# link-worthy; keeps the overview page cheap to render.
+# ---------------------------------------------------------------------------
+
+
+def _memory_stats(db: Session) -> dict[str, int]:
+    """Cheap counts for the overview banner. Safe even when empty."""
+    total_live = db.query(Belief).filter(Belief.superseded_at.is_(None)).count()
+    total_tombstoned = db.query(Belief).filter(Belief.superseded_at.isnot(None)).count()
+    distinct_chains = db.query(Belief.user_id).distinct().count()
+    return {
+        "total_live": total_live,
+        "total_tombstoned": total_tombstoned,
+        "distinct_chains": distinct_chains,
+    }
+
+
+@router.get("/memory", response_class=HTMLResponse)
+def memory_overview(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Memory subsystem overview: flag state, counts, recent beliefs."""
+    if not settings.MEMORY_ENABLED:
+        return templates.TemplateResponse(
+            request,
+            "memory.html",
+            {
+                "active": "memory",
+                "enabled": False,
+                "stats": {"total_live": 0, "total_tombstoned": 0, "distinct_chains": 0},
+                "beliefs": [],
+            },
+        )
+
+    stats = _memory_stats(db)
+    beliefs = (
+        db.query(Belief)
+        .order_by(Belief.observed_at.desc())
+        .limit(50)
+        .all()
+    )
+    return templates.TemplateResponse(
+        request,
+        "memory.html",
+        {
+            "active": "memory",
+            "enabled": True,
+            "stats": stats,
+            "beliefs": beliefs,
+        },
+    )
+
+
+@router.get("/memory/integrity", response_class=HTMLResponse)
+def memory_integrity_page(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Hash-chain verification page (form + last result).
+
+    The initial GET never runs the verifier — that would surprise
+    operators browsing the dashboard and could be expensive on large
+    stores. Users trigger verification via the POST below, which
+    re-renders this template with a populated `result`.
+    """
+    csrf_token = _issue_csrf(request)
+    stats = _memory_stats(db) if settings.MEMORY_ENABLED else {
+        "total_live": 0,
+        "total_tombstoned": 0,
+        "distinct_chains": 0,
+    }
+    return templates.TemplateResponse(
+        request,
+        "memory_integrity.html",
+        {
+            "active": "memory",
+            "enabled": settings.MEMORY_ENABLED,
+            "stats": stats,
+            "result": None,
+            "scope_label": None,
+            "error": None,
+            "csrf_token": csrf_token,
+        },
+    )
+
+
+def _parse_as_of(raw: str | None) -> tuple[datetime | None, str | None]:
+    """Parse an `as_of` form field. Returns `(value, error_message)`.
+
+    Empty strings are treated as "not provided". Naive datetimes are
+    rejected here to match the API behaviour — otherwise two paths to
+    the same verifier would disagree on validation.
+    """
+    if not raw or not raw.strip():
+        return None, None
+    try:
+        parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None, f"Could not parse as_of: {raw!r}. Expected ISO 8601 with offset."
+    if parsed.tzinfo is None:
+        return None, "as_of must be timezone-aware (e.g. '2026-04-17T00:00:00+00:00')."
+    return parsed, None
+
+
+@router.post("/memory/integrity/verify")
+def memory_integrity_verify(
+    request: Request,
+    user_id: str | None = Form(None),
+    scope_all: str | None = Form(None),
+    as_of: str | None = Form(None),
+    csrf_token: str | None = Form(None),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Run verify_chain with the submitted scope and re-render the page.
+
+    This handler is the dashboard twin of `GET /v1/memory/integrity`.
+    It uses the same Covernor gate (`memory:read:integrity`) and the
+    same scope-resolution rules so dashboard users can't escalate
+    beyond what the API would permit.
+    """
+    if not _csrf_valid(request, csrf_token):
+        return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
+
+    csrf_new = _issue_csrf(request)
+    stats = _memory_stats(db) if settings.MEMORY_ENABLED else {
+        "total_live": 0,
+        "total_tombstoned": 0,
+        "distinct_chains": 0,
+    }
+
+    if not settings.MEMORY_ENABLED:
+        return templates.TemplateResponse(
+            request,
+            "memory_integrity.html",
+            {
+                "active": "memory",
+                "enabled": False,
+                "stats": stats,
+                "result": None,
+                "scope_label": None,
+                "error": "Memory subsystem is disabled (MEMORY_ENABLED=false).",
+                "csrf_token": csrf_new,
+            },
+            status_code=503,
+        )
+
+    decision = evaluate_action("memory:read:integrity", resource="*", db_session=db)
+    if decision.decision in ("deny", "require_approval"):
+        return templates.TemplateResponse(
+            request,
+            "memory_integrity.html",
+            {
+                "active": "memory",
+                "enabled": True,
+                "stats": stats,
+                "result": None,
+                "scope_label": None,
+                "error": (
+                    f"Denied by policy "
+                    f"{sanitize_for_log(decision.policy_name or '<unnamed>')}: "
+                    f"{sanitize_for_log(decision.reason or decision.decision)}"
+                ),
+                "csrf_token": csrf_new,
+            },
+            status_code=403,
+        )
+
+    as_of_value, as_of_err = _parse_as_of(as_of)
+    if as_of_err is not None:
+        return templates.TemplateResponse(
+            request,
+            "memory_integrity.html",
+            {
+                "active": "memory",
+                "enabled": True,
+                "stats": stats,
+                "result": None,
+                "scope_label": None,
+                "error": as_of_err,
+                "csrf_token": csrf_new,
+            },
+            status_code=400,
+        )
+
+    user_clean = (user_id or "").strip()
+    scope_all_bool = (scope_all or "").lower() in ("true", "1", "on", "yes")
+
+    if user_clean:
+        result = verify_chain(db, user_id=user_clean, as_of=as_of_value)
+        scope_label = f"user_id={user_clean!r}"
+    elif scope_all_bool:
+        result = verify_chain(db, as_of=as_of_value)
+        scope_label = "all chains"
+    else:
+        result = verify_chain(db, user_id=None, as_of=as_of_value)
+        scope_label = "NULL-user (shared/system) chain"
+
+    logger.info(
+        "Dashboard integrity check: scope=%s verified=%s rows_checked=%d",
+        sanitize_for_log(scope_label),
+        result.verified,
+        result.rows_checked,
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "memory_integrity.html",
+        {
+            "active": "memory",
+            "enabled": True,
+            "stats": stats,
+            "result": result,
+            "scope_label": scope_label,
+            "error": None,
+            "csrf_token": csrf_new,
+        },
+    )

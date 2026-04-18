@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Memory — Nexus Agent{% endblock %}
+{% block content %}
+<h1>Belief Memory</h1>
+
+{% if not enabled %}
+<div class="card" style="border-color: var(--yellow);">
+  <h2 style="margin-top: 0;">Memory subsystem disabled</h2>
+  <p>
+    <span class="badge badge-flag">MEMORY_ENABLED=false</span>
+    The beliefs table is not in use on this deployment. Set
+    <span class="mono">MEMORY_ENABLED=true</span> in your environment and run
+    <span class="mono">alembic upgrade head</span> to enable semantic memory.
+  </p>
+</div>
+{% else %}
+
+<div class="stats">
+  <div class="stat">
+    <div class="value">{{ stats.total_live }}</div>
+    <div class="label">Live Beliefs</div>
+  </div>
+  <div class="stat">
+    <div class="value" style="color: var(--text-dim);">{{ stats.total_tombstoned }}</div>
+    <div class="label">Tombstoned</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ stats.distinct_chains }}</div>
+    <div class="label">Distinct Chains</div>
+  </div>
+</div>
+
+<div style="margin-bottom: 16px;">
+  <a href="/dashboard/memory/integrity" class="btn btn-sm btn-primary">Verify Hash Chain</a>
+</div>
+
+{% if beliefs %}
+<h2 style="margin-top: 32px;">Recent Beliefs</h2>
+<div class="card" style="padding: 0; overflow: hidden;">
+<table>
+  <thead>
+    <tr>
+      <th>Observed</th>
+      <th>Entity</th>
+      <th>Predicate</th>
+      <th>Value</th>
+      <th>Source</th>
+      <th>Confidence</th>
+      <th>Scope</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for b in beliefs %}
+    <tr>
+      <td class="mono text-sm">{{ b.observed_at.strftime("%Y-%m-%d %H:%M") }}</td>
+      <td class="mono">{{ b.entity | truncate(40) }}</td>
+      <td class="mono text-sm">{{ b.predicate | truncate(30) }}</td>
+      <td class="mono text-sm">{{ b.value | string | truncate(50) }}</td>
+      <td class="text-sm">{{ b.source_type }}</td>
+      <td class="mono text-sm">{{ "%.2f" | format(b.confidence()) }}</td>
+      <td class="text-sm text-dim">
+        {% if b.user_id %}{{ b.user_id | truncate(20) }}{% else %}<em>shared</em>{% endif %}
+      </td>
+      <td>
+        {% if b.superseded_at %}
+        <span class="badge badge-flag">tombstoned</span>
+        {% else %}
+        <span class="badge badge-pass">live</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="card empty">
+  No beliefs recorded yet. Beliefs are written by the agent loop when the
+  extractor proposes facts that pass the skepticism filter.
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
