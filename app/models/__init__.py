@@ -1,4 +1,5 @@
 from app.models.approval_log import ApprovalRequest, ApprovalVote
+from app.models.belief import Belief
 from app.models.critic_registry import CriticNode
 from app.models.episode import Episode
 from app.models.labeling_queue import LabelingItem
@@ -14,6 +15,7 @@ __all__ = [
     "StepTrace",
     "Episode",
     "Skill",
+    "Belief",
     "CriticNode",
     "ApprovalRequest",
     "ApprovalVote",

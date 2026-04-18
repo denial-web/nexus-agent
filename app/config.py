@@ -145,5 +145,18 @@ class Settings(BaseSettings):
     MCP_DEFAULT_POLICY: str = "deny"  # informational; policies live in DB
     MCP_AUDIT_ALL: bool = True  # False = trace only denied/blocked/immune-block
 
+    # Memory / Belief system (Phase 12) — OFF by default to guarantee zero regression
+    # See MEMORY_FLAGSHIP_PLAN.md for design. Governed, bitemporal, Beta-confidence beliefs.
+    MEMORY_ENABLED: bool = False
+    EXTRACTION_MODEL: str = ""  # empty = reuse default provider/model chain
+    # Per-entity-type skepticism stakes. Format: "type=threshold,type=threshold"
+    # Higher stakes require higher confidence to accept. See app/core/memory/skepticism.py.
+    MEMORY_STAKES_THRESHOLDS: str = "identity=0.9,financial=0.85,preference=0.5,state=0.3"
+    # Per-entity-type decay profile. Format: "type=half_life". Use "inf" for no decay.
+    # Units: d=days, h=hours, m=minutes. See app/core/memory/forgetting.py.
+    MEMORY_DECAY_PROFILE: str = "identity=inf,preference=180d,state=4h,context=1h"
+    MEMORY_RETRIEVAL_LIMIT: int = 5  # default k for RRF retrieval
+    MEMORY_EXTRACTOR_MAX_CHARS: int = 8_000  # cap input to extractor for cost control
+
 
 settings = Settings()

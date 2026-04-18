@@ -258,6 +258,61 @@ def _seed_mcp_policies(db: Session) -> None:
     logger.info("Seeded MCP default-deny policy")
 
 
+def _seed_memory_policies(db: Session) -> None:
+    """Seed default Covernor policies for the `memory:*` namespace.
+
+    Phase 12A ships ONE scoped allow policy: `memory:write:preference` is
+    permitted for any entity. All other `memory:write:*` actions fall
+    through to the namespace-wide default-deny. When `MEMORY_ENABLED` is
+    False the policies are still seeded so the regression tripwire stays
+    strict, but `app.core.memory.writer.write_belief` returns early and
+    never reaches the policy engine.
+
+    Idempotent by policy name.
+    """
+    from app.models.policy import Policy
+
+    existing = {
+        row.name
+        for row in db.query(Policy.name)
+        .filter(Policy.name.in_(["memory-default-deny", "memory-allow-preference-write"]))
+        .all()
+    }
+
+    wanted = [
+        Policy(
+            name="memory-default-deny",
+            description="Deny all memory writes until explicitly allowed",
+            action_pattern="memory:write:*",
+            resource_pattern="*",
+            decision="deny",
+            risk_level="high",
+            required_approvals="0",
+            priority=100,
+        ),
+        Policy(
+            name="memory-allow-preference-write",
+            description="Allow governed writes of user preference beliefs",
+            action_pattern="memory:write:preference",
+            resource_pattern="*",
+            decision="allow",
+            risk_level="low",
+            required_approvals="0",
+            priority=10,
+        ),
+    ]
+
+    added = 0
+    for policy in wanted:
+        if policy.name in existing:
+            continue
+        db.add(policy)
+        added += 1
+    if added:
+        db.commit()
+        logger.info("Seeded %d memory policies", added)
+
+
 def _seed_default_critics(db: Session) -> None:
     """Seed default critic_registry rows if the table is empty."""
     from app.models.critic_registry import CriticNode
@@ -373,6 +428,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             _seed_default_policies(db)
             _seed_agent_policies(db)
             _seed_mcp_policies(db)
+            _seed_memory_policies(db)
             _seed_default_critics(db)
         finally:
             db.close()

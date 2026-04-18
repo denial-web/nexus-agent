@@ -1,0 +1,88 @@
+{
+  "agent_state": null,
+  "agent_trajectory": null,
+  "approval_request_id": null,
+  "asflc": {
+    "all_paths": {
+      "cautious_response": {
+        "confidence": 1.0,
+        "event_count": 2,
+        "score": 28.5
+      },
+      "direct_response": {
+        "confidence": 1.0,
+        "event_count": 2,
+        "score": 45.0
+      }
+    },
+    "chain_regret": 0.0,
+    "chosen_path": "direct_response",
+    "confidence": 1.0,
+    "converged": true,
+    "loops": 2
+  },
+  "critic_result": {
+    "halted_by": null,
+    "rollback_count": 0,
+    "scores": {
+      "injection": {
+        "details": {},
+        "node_name": "injection",
+        "reasoning": "No injection detected",
+        "score": 1.0,
+        "verdict": "pass"
+      },
+      "quality": {
+        "details": {},
+        "node_name": "quality",
+        "reasoning": "good_length, complete, valid_structure, diverse_vocabulary",
+        "score": 1.0,
+        "verdict": "pass"
+      },
+      "reasoning": {
+        "details": {},
+        "node_name": "reasoning",
+        "reasoning": "adequate_length, valid_json, structured_output, no_contradictions",
+        "score": 1.0,
+        "verdict": "pass"
+      },
+      "safety": {
+        "details": {},
+        "node_name": "safety",
+        "reasoning": "Content appears safe",
+        "score": 1.0,
+        "verdict": "pass"
+      }
+    },
+    "verdict": "pass"
+  },
+  "error": null,
+  "governance": {
+    "decision": "allow",
+    "policy": "allow-chat-respond",
+    "policy_id": "__NORMALIZED__",
+    "risk_level": "low"
+  },
+  "immune_input": {
+    "score": 0.0,
+    "triggers": [],
+    "verdict": "pass"
+  },
+  "immune_output": {
+    "score": 0.0,
+    "triggers": [],
+    "verdict": "pass"
+  },
+  "latency_ms": 0,
+  "model_id_used": "mock",
+  "response": "{\"analysis\": \"This is a mock response for testing the pipeline. The prompt was 103 characters long.\", \"recommendation\": \"No live LLM provider configured; using mock fallback.\", \"confidence\": 0.85}",
+  "run_mode": null,
+  "self_corrections": null,
+  "session_id": "golden-fixture-session-0001",
+  "status": "completed",
+  "task_reward_score": null,
+  "token_count": 0,
+  "total_steps": null,
+  "trace_id": "__NORMALIZED__",
+  "user_feedback": null
+}
