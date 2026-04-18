@@ -790,6 +790,19 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for developmen
 
 ---
 
+## Trademarks
+
+OpenClaw and ClawHub are trademarks of their respective owners.
+Hermes and Nous Research are trademarks of Nous Research, Inc.
+
+Nexus Agent is an independent open-source project and is not
+affiliated with, endorsed by, or sponsored by these projects.
+References to OpenClaw skills and Hermes-class models in the
+documentation, code, and launch materials describe interoperability
+only.
+
+---
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).

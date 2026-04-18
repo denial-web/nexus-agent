@@ -315,12 +315,19 @@ multi-task on Slack / email during this window.
 
 ---
 
-## Pre-drafted replies to the four most likely objections
+## Pre-drafted replies to the seven most likely objections
 
 These are the objections that will appear top-of-thread within the
 first hour, based on the positioning doc in
-[MEMORY_FLAGSHIP_PLAN.md §2.5](../MEMORY_FLAGSHIP_PLAN.md). Responses
-are deliberately short, receipt-bearing, non-defensive.
+[MEMORY_FLAGSHIP_PLAN.md §2.5](../MEMORY_FLAGSHIP_PLAN.md) and the
+launch-copy trademark review (see
+[docs/launch/hn_show.md §7](launch/hn_show.md) and the decision-log
+entries marked "hn_show.md" in the plan). Responses are deliberately
+short, receipt-bearing, non-defensive. Four originals (§1–4 below)
+plus three added during the L-1d trademark review pass (§5–7). Each
+ends with a `docs/*.md §...` pointer — the asymmetry is the goal
+(you spent months on the docs; the commenter spent 30 seconds on
+the objection).
 
 ### Objection 1: "This is just LangChain / CrewAI / AutoGen."
 
@@ -384,6 +391,64 @@ are deliberately short, receipt-bearing, non-defensive.
 > correct solution to the audit problem — deliberately boring.
 > `docs/memory.md §"Hash-chain integrity"` shows the exact hash
 > inputs.
+
+### Objection 5: "This is just logging — why call it a runtime?"
+
+**Canned response:**
+
+> Logging records what *did* happen. Nexus is in the critical path
+> of what *is about to* happen — immune scan can BLOCK before
+> generation, Covernor can DENY before a tool call, the critic
+> tree can HALT before a response reaches the user, the skepticism
+> gate can REJECT a belief write before it lands. The hash-chained
+> trace is the audit artefact of that runtime enforcement, not the
+> enforcement itself. Drop the chain and the runtime still governs;
+> drop the runtime and the chain is just syslog. `app/agent/pipeline.py`
+> is the seven-step orchestrator; each step has a deny path that a
+> pure logger couldn't have. The benchmarks
+> (`tool_injection_redteam` 18/18 blocked, `skill_composition`
+> 11/11 with the exfil probe denied at `shell_exec`) are the
+> receipts that prove the enforcement path runs, not just the
+> logger path.
+
+### Objection 6: "Why mention OpenClaw and Hermes by name? Feels like brand piggybacking."
+
+**Canned response:**
+
+> Fair question. Two reasons. (1) We actually ship both integrations:
+> `app/core/agent/clawhub_import.py` runs real SKILL.md through the
+> same import path as `POST /v1/skills/import`, and
+> `LOCAL_HF_MODEL_ID=NousResearch/Hermes-3-Llama-3.1-8B` resolves
+> through the existing provider chain — both verifiable on a fresh
+> clone. (2) Nominative fair use is the standard OSS-launch practice
+> when describing real interoperability (LangChain names OpenAI,
+> LlamaIndex names HuggingFace, etc.); we follow the same rule.
+> The README has a dedicated `## Trademarks` section explicitly
+> disclaiming affiliation or endorsement, and the launch copy
+> mirrors it. If we weren't integrating, the naming would be
+> piggybacking; since we are, it's compatibility documentation.
+> `README.md#trademarks` for the attribution block;
+> `docs/openclaw_integration.md` and `docs/hermes_integration.md`
+> for the technical details.
+
+### Objection 7: "Isn't this just a new form of vendor lock-in?"
+
+**Canned response:**
+
+> Structurally no, and the architecture makes that falsifiable.
+> Nexus sits between the planner (any LLM provider — Gemini,
+> OpenAI, DeepSeek, Ollama, vLLM, TGI, local HuggingFace) and the
+> execution surface (any MCP backend, any ClawHub skill, any
+> in-process tool). Swap the planner: change `DEFAULT_PROVIDER` in
+> `.env` and restart — zero code change. Swap the skill source:
+> import from a different URL or a local file. Swap the memory
+> store: the memory interface is behind `app/core/memory/*` — the
+> Covernor gate and hash chain apply regardless of backend. The
+> three things we do lock down are the ones that make the runtime
+> meaningful at all: the immune scanner boundary, the default-deny
+> policy engine, and the hash-chained trace. Everything above and
+> below those is swappable. `app/core/llm/provider.py` is the
+> route resolver that proves the multi-provider claim.
 
 ---
 
