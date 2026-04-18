@@ -33,6 +33,13 @@ data/traces/
 
 bench-reports/
 
+# Pre-launch copy (HN / Reddit / X / LinkedIn drafts + reviewer notes).
+# Per docs/fame_playbook.md (L-1d rule): launch drafts live in a PRIVATE
+# gist, NEVER in the public repo. Canonical location on this machine is
+# ~/nexus-launch-drafts/. Keeping this gitignore entry as defense-in-depth
+# in case the path is ever recreated by mistake.
+docs/launch/
+
 *.log
 .DS_Store
 node_modules/
