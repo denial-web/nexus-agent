@@ -144,3 +144,37 @@ class TestFusion:
             RetrievalQuery(text="shared", limit=3), beliefs
         )
         assert len(result) == 3
+
+
+class TestBeliefsAsOfTzContract:
+    """The bitemporal read helper is an audit-facing API: we'd rather
+    fail loudly on a naive datetime than silently produce
+    backend-dependent answers. See app/core/memory/retrieval.py's
+    `beliefs_as_of` docstring for the full rationale."""
+
+    def test_naive_datetime_raises_value_error(self):
+        from datetime import datetime
+
+        from app.core.memory.retrieval import beliefs_as_of
+
+        naive = datetime(2026, 1, 1, 12, 0)  # no tzinfo
+        assert naive.tzinfo is None
+        with pytest.raises(ValueError, match="timezone-aware"):
+            beliefs_as_of(db=None, at=naive)  # type: ignore[arg-type]
+
+    def test_aware_datetime_short_circuits_when_flag_off(self):
+        """The tz guard must run AFTER the feature-flag check, so a
+        disabled memory subsystem doesn't raise on callers that happen
+        to pass naive datetimes. Matches the rest of the module's
+        flag-first posture."""
+        from datetime import datetime
+
+        from app.core.memory.retrieval import beliefs_as_of
+
+        with patch("app.core.memory.retrieval.settings") as s:
+            s.MEMORY_ENABLED = False
+            result = beliefs_as_of(
+                db=None,  # type: ignore[arg-type]
+                at=datetime(2026, 1, 1, 12, 0),  # naive, but flag is off
+            )
+        assert result == []

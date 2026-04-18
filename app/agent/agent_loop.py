@@ -56,6 +56,9 @@ class AgentRunResult:
     self_corrections: int = 0
     trajectory: list[dict[str, Any]] = field(default_factory=list)
     agent_state: dict[str, Any] | None = None
+    # Belief-memory bookkeeping (Phase 12 Week 2). Empty when MEMORY_ENABLED=False.
+    beliefs_used: list[str] = field(default_factory=list)
+    beliefs_formed: list[str] = field(default_factory=list)
 
 
 def _retrieve_episodes(db: Session | None, task: str, limit: int = 3) -> str:
@@ -126,6 +129,129 @@ def _retrieve_skills(db: Session | None, task: str, limit: int = 3) -> str:
     except Exception:
         logger.debug("Skill retrieval failed", exc_info=True)
         return ""
+
+
+def _retrieve_beliefs(
+    db: Session | None,
+    task: str,
+    *,
+    user_id: str | None,
+    session_id: str | None,
+    limit: int | None = None,
+) -> tuple[str, list[str]]:
+    """Retrieve ranked beliefs for the user/session scope to seed the planner.
+
+    Returns a (context_text, belief_ids) tuple. The text is injected into
+    the system prompt; the ids are recorded on `trace.beliefs_used` so we
+    can audit which beliefs influenced a run.
+
+    No-op (returns ("", [])) when `settings.MEMORY_ENABLED=False` — this
+    is what the regression tripwire verifies.
+    """
+    if not settings.MEMORY_ENABLED or not db:
+        return "", []
+    try:
+        from app.core.memory.retrieval import RetrievalQuery, retrieve
+        from app.models.belief import Belief
+
+        effective_limit = limit if limit is not None else settings.MEMORY_RETRIEVAL_LIMIT
+
+        candidates = (
+            db.query(Belief)
+            .filter(
+                Belief.user_id == user_id,
+                Belief.superseded_at.is_(None),
+            )
+            .order_by(Belief.observed_at.desc())
+            .limit(200)
+            .all()
+        )
+        if not candidates:
+            return "", []
+
+        query = RetrievalQuery(
+            text=task or "",
+            user_id=user_id,
+            session_id=session_id,
+            limit=effective_limit,
+        )
+        scored = retrieve(query, candidates)
+        if not scored:
+            return "", []
+
+        used_ids: list[str] = []
+        lines: list[str] = []
+        for sb in scored:
+            b = sb.belief
+            used_ids.append(b.id)
+            confidence = b.confidence()
+            value_preview = str(b.value)[:120]
+            lines.append(
+                f"- [{b.entity_type}, conf={confidence:.2f}] "
+                f"{b.entity} {b.predicate} = {value_preview}"
+            )
+        return "\n".join(lines), used_ids
+    except Exception:
+        logger.debug("Belief retrieval failed", exc_info=True)
+        return "", []
+
+
+def _extract_and_persist_beliefs(
+    db: Session | None,
+    *,
+    prompt: str,
+    response: str,
+    user_id: str | None,
+    session_id: str | None,
+    trace_id: str,
+) -> list[str]:
+    """Run the extractor on a completed turn and persist surviving drafts.
+
+    Returns the ids of beliefs that were accepted or superseded. Silent
+    no-op when `settings.MEMORY_ENABLED=False` — the extractor/writer
+    both independently re-check the flag, but we also short-circuit here
+    to avoid pointless LLM calls.
+
+    Failures never bubble up: a broken extractor or writer must not
+    fail a successful agent run.
+    """
+    if not settings.MEMORY_ENABLED or not db or not response:
+        return []
+    try:
+        from app.core.memory.extractor import EXTRACTOR_VERSION, extract_beliefs
+        from app.core.memory.writer import write_beliefs
+
+        drafts = extract_beliefs(
+            user_message=prompt,
+            assistant_response=response,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if not drafts:
+            return []
+
+        outcomes = write_beliefs(
+            drafts,
+            db,
+            source_trace_id=trace_id,
+            extractor_version=EXTRACTOR_VERSION,
+        )
+        formed_ids = [
+            o.belief_id
+            for o in outcomes
+            if o.belief_id and o.status in ("accepted", "superseded")
+        ]
+        if formed_ids:
+            db.commit()
+        return formed_ids
+    except Exception:
+        logger.debug("Belief extraction/write failed", exc_info=True)
+        try:
+            if db:
+                db.rollback()
+        except Exception:
+            pass
+        return []
 
 
 def _workspace_path() -> Path:
@@ -331,6 +457,8 @@ def _update_trace_final(
     row.self_corrections = result.self_corrections
     row.agent_trajectory = result.trajectory
     row.agent_state = result.agent_state
+    row.beliefs_used = list(result.beliefs_used) if result.beliefs_used else None
+    row.beliefs_formed = list(result.beliefs_formed) if result.beliefs_formed else None
     db.commit()
     cascade_rehash_from_trace(db, trace_id)
 
@@ -403,6 +531,8 @@ def _episode_persist(
         step_count=result.total_steps,
         self_corrections=result.self_corrections,
         agent_trajectory=result.trajectory,
+        beliefs_used=list(result.beliefs_used) if result.beliefs_used else None,
+        beliefs_formed=list(result.beliefs_formed) if result.beliefs_formed else None,
     )
     db.add(ep)
     db.commit()
@@ -416,6 +546,7 @@ def run_agent(
     db_session: Session | None = None,
     user_feedback: str | None = None,
     resume_state: dict[str, Any] | None = None,
+    user_id: str | None = None,
 ) -> AgentRunResult:
     """
     Zero-trust agentic loop: plan → tool (governed) → reflect → critic → repeat.
@@ -498,6 +629,18 @@ def run_agent(
     tools_json = json.dumps(registry.tool_definitions_json(), indent=2)
     episode_context = _retrieve_episodes(db_session, prompt) if db_session and not resume_state else ""
     skill_context = _retrieve_skills(db_session, prompt) if db_session and not resume_state else ""
+    belief_context, belief_ids_used = (
+        _retrieve_beliefs(
+            db_session,
+            prompt,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if db_session and not resume_state
+        else ("", [])
+    )
+    if belief_ids_used:
+        result.beliefs_used = belief_ids_used
     system = (
         "You are a governed agent. Reply with a single JSON object only, no markdown, either:\n"
         '{"action":"tool_call","tool":"<name>","arguments":{...}}\n'
@@ -509,6 +652,11 @@ def run_agent(
         system += f"\n\nReusable skills (follow these proven steps if they match your task):\n{skill_context}"
     if episode_context:
         system += f"\n\nPast experience (use to guide your plan):\n{episode_context}"
+    if belief_context:
+        system += (
+            "\n\nKnown beliefs about the user (high-confidence, current):\n"
+            f"{belief_context}"
+        )
 
     if db_session and not resume_state:
         from app.models.trace import Trace
@@ -631,6 +779,16 @@ def run_agent(
                 self_corrections,
             )
             result.trajectory.append({"kind": "final", "content": content[:500]})
+            formed_ids = _extract_and_persist_beliefs(
+                db_session,
+                prompt=prompt,
+                response=content,
+                user_id=user_id,
+                session_id=session_id,
+                trace_id=trace_id,
+            )
+            if formed_ids:
+                result.beliefs_formed = formed_ids
             break
 
         if act != "tool_call":

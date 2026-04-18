@@ -24,3 +24,9 @@ class Episode(Base):
     self_corrections = Column(Integer, nullable=True)
     agent_trajectory = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    # Belief-memory bookkeeping (Phase 12 Week 2). Mirrors Trace columns.
+    # Stored per-episode so reward analysis can ask "what did the agent
+    # know going in, and what did it learn?" across sessions.
+    beliefs_used = Column(JSON, nullable=True)
+    beliefs_formed = Column(JSON, nullable=True)

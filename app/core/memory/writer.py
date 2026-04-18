@@ -169,12 +169,20 @@ def write_belief(
     *,
     source_trace_id: str | None = None,
     extractor_version: str | None = None,
+    observed_at: datetime | None = None,
 ) -> WriteOutcome:
     """Evaluate and persist a single belief draft under governance.
 
     Returns a `WriteOutcome` describing what happened. Never raises for
     policy or skepticism decisions — only for database errors, and even
     then the session is rolled back cleanly.
+
+    `observed_at` is an *optional* override for the belief-time
+    timestamp stamped on the new row (and on any rows it supersedes).
+    Default is `datetime.now(UTC)`. Providing it explicitly is how
+    deterministic benchmarks (tests/eval/temporal_qa) and
+    historical-import paths reconstruct a bitemporal timeline; normal
+    runtime writes MUST NOT pass this parameter.
     """
     if not settings.MEMORY_ENABLED:
         return WriteOutcome(
@@ -214,7 +222,7 @@ def write_belief(
             policy=policy,
         )
 
-    now = datetime.now(UTC)
+    now = observed_at if observed_at is not None else datetime.now(UTC)
 
     try:
         value_json = json.dumps(draft.value, sort_keys=True, default=str)
@@ -248,7 +256,7 @@ def write_belief(
         user_id=draft.user_id,
         agent_id=draft.agent_id,
         session_id=draft.session_id,
-        derived_from=[],
+        derived_from=list(draft.derived_from) if draft.derived_from else [],
         contradicts=list(decision.contradicts) if decision.contradicts else [],
     )
 

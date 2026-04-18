@@ -82,6 +82,12 @@ class BeliefDraft:
     keywords: list[str] | None = None
     embedding: list[float] | None = None
     rationale: str | None = None
+    # Causal provenance — belief ids this draft was inferred from.
+    # Empty for direct observations / user-stated facts; populated when
+    # a downstream critic or composer derives a new belief from
+    # retrieved priors. Read back via `Belief.derived_from` to
+    # reconstruct the "why do we believe X?" DAG.
+    derived_from: list[str] | None = None
 
 
 @dataclass(frozen=True)

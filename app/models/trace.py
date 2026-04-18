@@ -75,6 +75,16 @@ class Trace(Base):
     mcp_backend = Column(String(120), nullable=True, index=True)
     mcp_tool_name = Column(String(200), nullable=True, index=True)
 
+    # Belief-memory bookkeeping (Phase 12 Week 2) — additive-only, both
+    # columns nullable so rows predating the memory subsystem stay
+    # indistinguishable from rows written with MEMORY_ENABLED=False.
+    # beliefs_used:  list[str] of belief ids retrieved and injected
+    #                into the system prompt before this trace's LLM call.
+    # beliefs_formed: list[str] of belief ids persisted by the writer
+    #                 as a result of this trace (post-answer extraction).
+    beliefs_used = Column(JSON, nullable=True)
+    beliefs_formed = Column(JSON, nullable=True)
+
     __table_args__ = (
         Index("ix_trace_session_seq", "session_id", "sequence"),
         Index("ix_trace_status", "status"),

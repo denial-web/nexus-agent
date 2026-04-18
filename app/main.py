@@ -26,6 +26,7 @@ from app.api.critic import router as critic_router
 from app.api.dashboard import router as dashboard_router
 from app.api.governance import router as governance_router
 from app.api.mcp import router as mcp_router
+from app.api.memory import router as memory_router
 from app.api.skills import router as skills_router
 from app.api.traces import router as traces_router
 from app.api.training import router as training_router
@@ -686,6 +687,7 @@ _api_routers = [
     governance_router,
     skills_router,
     mcp_router,
+    memory_router,
     training_router,
     webhooks_router,
 ]

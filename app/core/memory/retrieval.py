@@ -38,13 +38,13 @@ import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from datetime import datetime
+
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
 
 from app.config import settings
-
-if TYPE_CHECKING:
-    from app.models.belief import Belief
-
+from app.models.belief import Belief
 
 _RRF_K = 60  # standard RRF smoothing constant (Cormack, Clarke, Büttcher 2009)
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]{2,}")
@@ -258,3 +258,74 @@ def retrieve(
         ScoredBelief(belief=by_id[bid], rrf_score=score, signals=sig)
         for bid, (score, sig) in top
     ]
+
+
+# ---------------------------------------------------------------------------
+# Bitemporal "as-of" retrieval
+# ---------------------------------------------------------------------------
+
+
+def beliefs_as_of(
+    db: Session,
+    at: datetime,
+    *,
+    entity: str | None = None,
+    predicate: str | None = None,
+    user_id: str | None = None,
+    agent_id: str | None = None,
+    limit: int | None = None,
+) -> list[Belief]:
+    """Return beliefs the agent held *at the given belief-time `at`*.
+
+    This is the read-side of the bitemporal axis: a row is "alive at `at`"
+    when it was written on or before `at` and had not yet been superseded
+    by `at`:
+
+        observed_at <= at
+        AND (superseded_at IS NULL OR superseded_at > at)
+
+    This is the canonical query behind the "what did we believe on
+    D-1?" temporal_qa benchmark and behind any future time-travel
+    retrieval UI.
+
+    No RRF, no scoring — just a scoped SQL filter. Callers layer ranking
+    on top by passing the result into `retrieve()`. Returns `[]` when
+    `MEMORY_ENABLED=False` so the tripwire stays happy.
+
+    `at` MUST be timezone-aware. We enforce this at runtime because
+    Postgres `TIMESTAMPTZ` comparisons against naive operands are
+    undefined across server-timezone configurations (CI already
+    exercises a non-UTC server timezone on PG; see commit 5377958),
+    and silently coercing would produce backend-dependent answers to
+    "what did we believe at T?" — the worst possible failure mode for
+    an audit-facing helper. SQLite round-trips stored timestamps as
+    naive; that is the row side of the convention and is handled by
+    the hash-chain verifier, not this read-path helper.
+    """
+    if not settings.MEMORY_ENABLED:
+        return []
+
+    if at.tzinfo is None:
+        raise ValueError(
+            "beliefs_as_of() requires a timezone-aware datetime for `at`; "
+            "got a naive datetime. Use datetime.now(UTC) or attach tzinfo "
+            "before querying."
+        )
+
+    q = db.query(Belief).filter(
+        Belief.observed_at <= at,
+        or_(Belief.superseded_at.is_(None), Belief.superseded_at > at),
+    )
+    if entity is not None:
+        q = q.filter(Belief.entity == entity)
+    if predicate is not None:
+        q = q.filter(Belief.predicate == predicate)
+    if user_id is not None:
+        q = q.filter(Belief.user_id == user_id)
+    if agent_id is not None:
+        q = q.filter(Belief.agent_id == agent_id)
+
+    q = q.order_by(Belief.observed_at.desc(), Belief.id.desc())
+    if limit is not None and limit > 0:
+        q = q.limit(limit)
+    return q.all()
