@@ -1,9 +1,10 @@
 # Nexus Agent
 
 [![CI](https://github.com/denial-web/nexus-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/denial-web/nexus-agent/actions/workflows/ci.yml)
+[![Nightly Benchmarks](https://github.com/denial-web/nexus-agent/actions/workflows/nightly_benchmark.yml/badge.svg)](https://github.com/denial-web/nexus-agent/actions/workflows/nightly_benchmark.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.13+](https://img.shields.io/badge/Python-3.13+-3776AB.svg)](https://www.python.org/)
-[![Tests: 462](https://img.shields.io/badge/Tests-462_passing-brightgreen.svg)](tests/)
+[![Tests: 1326](https://img.shields.io/badge/Tests-1326_passing-brightgreen.svg)](tests/)
 [![Demo](https://img.shields.io/badge/🤗_Demo-Live-orange.svg)](https://huggingface.co/spaces/denialkhmbot/nexus-agent-demo)
 
 **Zero-Trust & Self-Evolving AI Agent System**
@@ -41,6 +42,8 @@ Most LLM agent frameworks focus on chaining prompts and tools. None of them answ
 Nexus Agent is not another prompt-chaining framework. It is a **security and governance layer** that wraps any LLM call — whether you use it standalone or integrate it in front of your existing agent stack.
 
 **[Try the live demo on HuggingFace](https://huggingface.co/spaces/denialkhmbot/nexus-agent-demo)** — no install needed, runs in your browser.
+
+**[See the benchmark numbers](docs/benchmarks.md)** — six nightly benchmarks covering bitemporal recall, contradiction handling, causal derivation, tool-call injection, skill composition (with a hostile probe), and end-to-end memory uplift in the agent loop. All six pass their exit gates on the current main.
 
 ---
 
