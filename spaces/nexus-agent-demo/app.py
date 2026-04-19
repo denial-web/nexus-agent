@@ -797,7 +797,10 @@ def render_chain_preview() -> str:
         return "\n\n".join(lines)
 
 
-with gr.Blocks(title="Nexus Agent — Zero-Trust LLM Pipeline Demo") as demo:
+with gr.Blocks(
+    title="Nexus Agent — Zero-Trust LLM Pipeline Demo",
+    theme=gr.themes.Soft(),
+) as demo:
     gr.Markdown(
         """
         # Nexus Agent — Zero-Trust Pipeline Demo
@@ -912,4 +915,4 @@ with gr.Blocks(title="Nexus Agent — Zero-Trust LLM Pipeline Demo") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(theme=gr.themes.Soft())
+    demo.launch()
