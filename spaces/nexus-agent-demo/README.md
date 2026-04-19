@@ -8,7 +8,7 @@ sdk_version: 5.29.0
 app_file: app.py
 pinned: false
 license: apache-2.0
-short_description: Full agent with governance, memory, and audit — runs OpenClaw skills, uses Hermes-class models
+short_description: A governed AI agent with built-in audit and learning.
 tags:
   - llm
   - ai-safety
