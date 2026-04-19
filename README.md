@@ -7,11 +7,19 @@
 [![Tests: 1400](https://img.shields.io/badge/Tests-1400_passing-brightgreen.svg)](tests/)
 [![Demo](https://img.shields.io/badge/🤗_Demo-Live-orange.svg)](https://huggingface.co/spaces/denialkhmbot/nexus-agent-demo)
 
-**The governed, self-improving agent runtime.**
+**A governed AI agent with built-in audit and learning.**
 
-Runs every [OpenClaw](https://www.clawhub.ai/) skill safely. Plugs in any [Hermes](https://huggingface.co/NousResearch)-class tool-calling model. Learns from every run. Answers *"why did I do X?"* with a cryptographically-signed audit chain.
+Nexus is a complete agent system — tools, planning, memory, and self-improving skills — wrapped in a zero-trust runtime that enforces security, governance, and audit on every action. Every LLM call, tool execution, and memory write passes through the same pipeline — **scan → decision → generation → critic → governance → audit** — and answers *"why did I do X?"* with a cryptographically-signed audit chain.
 
-Nexus is the zero-trust runtime layer OpenClaw and Hermes were missing — prompt-injection scanning in 11 languages, default-deny governance with K-of-N approval, a pluggable critic tree, bitemporal memory with causal provenance, and a training flywheel that turns every failure into a labeled training example.
+**Nexus runs on its own.** It also interoperates with existing agent ecosystems:
+
+- Imports [OpenClaw](https://www.clawhub.ai/) SKILL.md skills
+- Routes [Hermes](https://huggingface.co/NousResearch)-class tool-calling models
+- Works with any LLM provider (Gemini, OpenAI, DeepSeek, Ollama, local HF)
+
+Nexus does not replace models or skill ecosystems. **It replaces the missing control layer** that makes agents safe, auditable, and production-ready.
+
+Concretely: prompt-injection scanning in 11 languages, default-deny governance with K-of-N approval, a pluggable critic tree, bitemporal memory with causal provenance, and a training flywheel that turns every failure into a labeled training example.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -32,6 +40,8 @@ Nexus is the zero-trust runtime layer OpenClaw and Hermes were missing — promp
 
 **[Try the live demo on HuggingFace](https://huggingface.co/spaces/denialkhmbot/nexus-agent-demo)** — no install needed, runs in your browser.
 
+> **Demo note.** The HuggingFace Space runs the governance pipeline in **mock mode** and demonstrates the security layer only (input scan, critic, output scan, hash chain). Full agent behaviour — planning, skills, bitemporal memory — requires live LLM calls and is shown in the reproducible tests and `nexus chat` CLI demos below. Both claims are separately falsifiable; the Space is load-bearing for the *governance* claim, not the *complete-agent* claim.
+
 **[See the benchmark numbers](docs/benchmarks.md)** — six nightly benchmarks covering bitemporal recall, contradiction handling, causal derivation, tool-call injection, skill composition (with a hostile probe), and end-to-end memory uplift in the agent loop. All six pass their exit gates on the current main.
 
 **[Memory architecture](docs/memory.md)** — how beliefs are written, retrieved, and audited under the same zero-trust contract as every other Nexus surface (bitemporal + Beta confidence + causal DAG + hash-chained integrity).
@@ -50,6 +60,27 @@ Nexus is the zero-trust runtime layer OpenClaw and Hermes were missing — promp
 | **vs LangChain / CrewAI / AutoGen** | A zero-trust runtime you can put in front of any agent stack. | Another prompt-chaining framework. |
 
 The bet: most agent stacks ship the brain (LLM + tools + memory) but skip the hard parts — governance, adversarial resilience, audit, and a real learning loop. Nexus is those hard parts, shipped as a runtime, wired into every primitive you already use.
+
+---
+
+## Nexus is also a complete agent on its own
+
+You do not need OpenClaw skills or a Hermes-class model to use Nexus. Out of the box, Nexus ships everything a modern agent framework ships — plus governance, audit, and learning that most of them don't.
+
+**These capabilities are not theoretical.** Every row below maps to a specific module path on `main`, and the [Killer demos](#killer-demos) section reproduces the four most load-bearing claims with single-command `pytest` runs on a fresh clone.
+
+| Capability | What's in the box | Where it lives |
+|---|---|---|
+| **Tools** | `shell_exec`, `file_read`, `file_write`, `web_fetch`, `search` — all Covernor-gated by default | `app/core/agent/builtin.py` + extensible `ToolRegistry` |
+| **ReAct loop** | JSON tool protocol, reflection, self-correction, resume-after-approval | `app/agent/agent_loop.py` |
+| **Planning** | A-S-FLC decision engine decomposes the task into paths before generation | `app/core/asflc/` |
+| **Self-improving skills** | Auto-abstracted from high-reward trajectories. Reward-tracked, auto-disabled if they drift. | `Skill` model + `_retrieve_skills` |
+| **Episode memory** | Past similar tasks surface in the system prompt, ranked by reward | `Episode` model + `_retrieve_episodes` |
+| **Belief memory** | Bitemporal, Beta-confident, causally provenanced, hash-chained per user | `app/core/memory/` + [docs/memory.md](docs/memory.md) |
+| **LLM routing** | Gemini / OpenAI / DeepSeek / Ollama / local HF / mock, with circuit breakers and provider fallback | `app/core/llm/provider.py` |
+| **Surfaces** | HTTP (`/v1/agent/run`, `/v1/agent/stream`, `/v1/agent/compare`), `nexus` CLI (`chat`, `run`, `memory`, `skills`), Telegram bot | `app/api/`, `app/cli.py`, `app/channels/` |
+
+**Interoperability is a feature, not a dependency.** Nexus grows its own skills from its own trajectories and routes to whichever LLM you have keys for. Importing an OpenClaw SKILL.md or pointing `LOCAL_HF_MODEL_ID` at a Hermes-class model just means you don't have to rebuild what those ecosystems already do well — every Nexus primitive works without either.
 
 ---
 

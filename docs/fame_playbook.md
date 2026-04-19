@@ -25,7 +25,7 @@ This doc is internal-only. Do not link it from the README.
 2. [T-minus calendar](#t-minus-calendar)
 3. [Launch sequencing — the posting order](#launch-sequencing--the-posting-order)
 4. [What to monitor in the first 2 hours](#what-to-monitor-in-the-first-2-hours)
-5. [Pre-drafted replies to the four most likely objections](#pre-drafted-replies-to-the-four-most-likely-objections)
+5. [Pre-drafted replies to the fourteen most likely objections](#pre-drafted-replies-to-the-fourteen-most-likely-objections)
 6. [Fallbacks — what to do when something goes wrong](#fallbacks)
 7. [Exit criteria — when is the launch "over"](#exit-criteria)
 8. [Post-launch: the 7-day operator checklist](#post-launch-the-7-day-operator-checklist)
@@ -315,7 +315,7 @@ multi-task on Slack / email during this window.
 
 ---
 
-## Pre-drafted replies to the seven most likely objections
+## Pre-drafted replies to the fourteen most likely objections
 
 These are the objections that will appear top-of-thread within the
 first hour, based on the positioning doc in
@@ -449,6 +449,165 @@ the objection).
 > policy engine, and the hash-chained trace. Everything above and
 > below those is swappable. `app/core/llm/provider.py` is the
 > route resolver that proves the multi-provider claim.
+
+### Objection 8: "So it's just OpenClaw / Hermes with extra governance steps?"
+
+**Canned response:**
+
+> No — and the difference is visible on a fresh clone with no
+> external dependencies. Nexus ships its own agent primitives: five
+> built-in tools (`shell_exec`, `file_read`, `file_write`,
+> `web_fetch`, `search`) Covernor-gated by default, a ReAct loop
+> with reflection and self-correction (`app/agent/agent_loop.py`),
+> an A-S-FLC planner (`app/core/asflc/`), skills *auto-abstracted
+> from high-reward trajectories* (our own runs become reusable
+> workflows via the `Skill` model — a different primitive from
+> curated-skill-library projects), bitemporal belief memory with
+> causal provenance (`docs/memory.md`), and multi-provider LLM
+> routing (Gemini / OpenAI / DeepSeek / Ollama / local HF / mock).
+> A fresh clone with `DEFAULT_PROVIDER=mock` and zero imports runs
+> all four nightly-benchmark demos end-to-end. OpenClaw skill
+> import and Hermes-class planner routing are interoperability
+> features — they exist so you don't have to rebuild what those
+> ecosystems already do well, not because the agent stops working
+> without them. The README's "Nexus is also a complete agent on
+> its own" table is the falsifiable version of this claim: every
+> row maps to a specific module path on `main`.
+
+---
+
+### Objection 9: "This looks like everything + kitchen sink. What does it actually do better than others?"
+
+> Nothing in feature count — feature checkboxes are a losing game,
+> and we're not trying to win one. The differentiator is **inline
+> enforcement at three boundaries** most agent stacks leave
+> advisory: LLM call, tool call, and memory write. Each of those
+> three routes through the same pipeline (immune scan → A-S-FLC
+> planner → critic tree → Covernor → output scan → hash chain),
+> and Covernor's default is `deny`, not `warn`. So the honest
+> answer is not "we do X better"; it's "we refuse at three
+> boundaries others don't refuse at." `tool_injection_redteam`
+> proves the tool-call boundary holds against 18 payloads across
+> 10 categories; `skill_composition` proves a hostile skill gets
+> caught at execution, not just at import. Those two numbers in
+> `docs/benchmarks.md` are the falsifiable version of this claim
+> — run them on a fresh clone and disagree if they break.
+
+---
+
+### Objection 10: "This is too complex — no one will use it."
+
+> Complexity is internal; the operator surface is two calls.
+> `POST /v1/agent/run` with a prompt body, or `nexus chat` for
+> CLI. Everything below that line — immune scanner, A-S-FLC
+> planner, critic tree, Covernor, hash chain, labeling queue,
+> ECE calibration, scheduled retention — runs as defaults without
+> configuration. Zero env vars for local dev; six env vars for
+> production Postgres + Redis, all documented in `.env.example`
+> with inline comments. The learning loop (export schedule, LoRA
+> comparison thresholds) is the only subsystem with optional
+> configuration; everything else works out of the box. The
+> 60-second Docker quickstart in `README.md §Quickstart` is the
+> falsifiable version: if it takes longer than 60 seconds on a
+> fresh machine, that's a real bug and worth a GitHub issue.
+
+---
+
+### Objection 11: "So what does Nexus actually replace?"
+
+> It replaces the glue code teams write around agents — logging,
+> guardrails, policy checks, audit trails, and evaluation loops —
+> that usually lives outside the agent and is inconsistently
+> enforced, frequently rewritten from scratch for every deployment,
+> and almost never peer-reviewed. Nexus moves those concerns into
+> a single runtime where every LLM call, every tool call, and
+> every memory write passes through the same six-stage pipeline:
+> `scan → decision → generation → critic → governance → audit`.
+>
+> It does **not** replace the model (Hermes-class weights, GPT-4,
+> Claude, Gemini — whatever you load) and it does **not** replace
+> the skill ecosystem (OpenClaw / ClawHub's community catalog). It
+> replaces the *missing control layer* between them — the layer
+> that decides whether the model's chosen action is allowed to
+> execute, records the decision in a tamper-evident chain, and
+> feeds failures into a training queue so the agent improves on
+> its own mistakes. See `README.md §Architecture` and
+> `docs/benchmarks.md §tool_injection_redteam` for receipts.
+
+---
+
+### Objection 12: "Your HuggingFace demo doesn't show any real agent behavior."
+
+> Correct — the Space runs in **mock mode** and demonstrates the
+> security pipeline only. Full-agent behaviour (planning, skill
+> execution, memory writes, self-improvement) requires live LLM
+> calls and is exercised in the repo's test suite
+> (`tests/test_agent_loop*.py`, `tests/test_skill_composition.py`,
+> `tests/test_agent_benchmark.py`) and the six CI-gated benchmarks
+> in `docs/benchmarks.md`. The pipeline shown in the Space *is*
+> the same one wrapping every agent action in production — so the
+> demo is load-bearing for the governance claim, just not for the
+> "Nexus is a complete agent" claim. Those are separately
+> falsifiable and the README's Killer Demos section points to
+> single-command `pytest` reproductions for each.
+>
+> If you want to see full-agent behaviour without provisioning
+> keys: clone the repo, run `pytest tests/test_skill_composition.py -v`
+> — it runs on the mock provider and exercises the full ReAct
+> loop + skill recall + critic tree + governance end-to-end in
+> under ten seconds. That's the answer to this objection in
+> executable form.
+
+---
+
+### Objection 13: "Why not just use Guardrails AI, Lakera, or NeMo Guardrails?"
+
+> Those are **input/output scanners**. They filter what goes into
+> and what comes out of an LLM call. That is one-third of the
+> control layer. Nexus enforces the same discipline on **tool
+> calls** and **memory writes** as well — which is where
+> prompt-injection attacks that bypass output scanners
+> (ask the LLM to *do* the bad thing, don't ask it to *say* the
+> bad thing) actually land. The `tool_injection_redteam` benchmark
+> in `docs/benchmarks.md` is the falsifiable version of this
+> claim: 18 payloads across 10 attack categories, 100% detection
+> at the tool-call boundary, CI-gated on `main`.
+>
+> The second differentiator is the **learning loop**: every
+> critic-halt or governance-denial pushes a labeled example onto
+> the training queue (`app/core/training/labeler.py`), which
+> feeds back into fine-tuning via the sister Doctrine Lab project.
+> Pure scanners don't have that feedback path — they filter
+> per-request and forget.
+>
+> These tools are not mutually exclusive with Nexus. You can run
+> Guardrails or Lakera *inside* Nexus as a critic node in the tree
+> if you want their specific detection rules. They are strictly
+> weaker standalone; they are additive inside the Nexus runtime.
+
+---
+
+### Objection 14: "So this is just a wrapper?"
+
+> Only if the wrapper (a) refuses unsafe LLM calls before they
+> execute, (b) refuses unsafe tool invocations by a default-deny
+> policy engine with K-of-N human approval and ECDSA-signed
+> capability tokens, (c) writes every action into a tamper-evident
+> hash chain with SHA-256 previous-block linking that a
+> standalone verifier can re-validate offline, (d) evaluates every
+> output against a hot-swappable critic tree stored in the
+> database (not hardcoded), and (e) feeds every failure into a
+> labeled training queue for continuous fine-tuning.
+>
+> Most things called "just a wrapper" do none of the above — they
+> add an auth header and a retry loop and call it a runtime. The
+> technical load-bearing distinction is **whether the wrapper has
+> refusal authority**. Nexus's Covernor policy engine defaults to
+> `deny`, not `warn`; unknown actions are blocked until an
+> explicit policy allows them. That default is the line between
+> a wrapper and a control layer. See `app/core/covernor/policy_engine.py`
+> and the `skill_composition` benchmark in `docs/benchmarks.md`
+> for the receipts.
 
 ---
 

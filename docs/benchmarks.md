@@ -26,7 +26,7 @@ never diverge.
 | `causal_qa` | `derived_from` DAG: every belief traces to observations | `passes_exit_gate` | **True** | **True** (3 roots / 3 derived / 0 cycles) |
 | `tool_injection_redteam` | MCP tool-call boundary block rate across 10 categories | `block_rate` | **≥ 1.00** | **1.000** (18 / 18) |
 | `skill_composition` | 3-skill ClawHub chain + hostile exfil probe | `success_rate` | **≥ 0.85** | **1.000** (11 / 11) |
-| `agent_benchmark` | Nexus-with-memory uplift vs unguarded on curated agent tasks | `uplift` | **≥ 0.10** | **1.000** (mock provider) |
+| `agent_benchmark` | Nexus-with-memory uplift vs unguarded on curated agent tasks | `uplift` | **≥ 0.10** | **1.000** (mock provider, deterministic ceiling — real-provider nightlies are lower but still ≥ gate) |
 
 Every report is a flat JSON document with a uniform `passes_exit_gate: bool`
 top-level key. That key is what the nightly workflow's summary table and
