@@ -351,18 +351,20 @@ def _run_inner(
         result.latency_ms = _elapsed(start)
         if db_session:
             from app.models.approval_log import ApprovalRequest
+            from app.services.approval import approval_token_scope
 
             required = max(gov_decision.required_approvals, settings.APPROVAL_QUORUM)
+            action_payload = {"prompt": prompt, "model_id": model_id}
             approval = ApprovalRequest(
                 trace_id=trace_id,
                 action_type="respond",
-                action_payload={"prompt": prompt, "model_id": model_id},
+                action_payload=action_payload,
                 risk_level=gov_decision.risk_level,
                 policy_id=gov_decision.policy_id,
                 required_approvals=str(required),
                 received_approvals="0",
                 status="pending",
-                token_scope={"trace_id": trace_id, "action": "respond"},
+                token_scope=approval_token_scope(trace_id, "respond", action_payload),
                 expires_at=datetime.now(UTC) + timedelta(hours=24),
             )
             db_session.add(approval)
@@ -646,18 +648,20 @@ def run_stream(
         result.latency_ms = _elapsed(start)
         if db_session:
             from app.models.approval_log import ApprovalRequest
+            from app.services.approval import approval_token_scope
 
             required = max(gov_decision.required_approvals, settings.APPROVAL_QUORUM)
+            action_payload = {"prompt": prompt, "model_id": model_id}
             approval = ApprovalRequest(
                 trace_id=trace_id,
                 action_type="respond",
-                action_payload={"prompt": prompt, "model_id": model_id},
+                action_payload=action_payload,
                 risk_level=gov_decision.risk_level,
                 policy_id=gov_decision.policy_id,
                 required_approvals=str(required),
                 received_approvals="0",
                 status="pending",
-                token_scope={"trace_id": trace_id, "action": "respond"},
+                token_scope=approval_token_scope(trace_id, "respond", action_payload),
                 expires_at=datetime.now(UTC) + timedelta(hours=24),
             )
             db_session.add(approval)

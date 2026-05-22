@@ -472,6 +472,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `APPROVAL_QUORUM` | Minimum approvers for K-of-N governance | `2` |
+| `APPROVAL_REVIEWERS` | Comma-separated reviewer IDs allowed to vote. **Required in beta/production.** | (empty) |
 | `ECDSA_PRIVATE_KEY_PATH` | Path to ECDSA private key PEM. Auto-generated if empty. | (empty) |
 
 ### Database

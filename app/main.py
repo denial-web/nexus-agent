@@ -151,13 +151,13 @@ def _seed_agent_policies(db: Session) -> None:
             priority=8,
         ),
         Policy(
-            name="agent-allow-file-write",
-            description="Agent file writes under workspace",
+            name="agent-approve-file-write",
+            description="Agent file writes under workspace require approval",
             action_pattern="file_write",
             resource_pattern="*",
-            decision="allow",
-            risk_level="medium",
-            required_approvals="0",
+            decision="require_approval",
+            risk_level="high",
+            required_approvals="1",
             priority=8,
         ),
         Policy(
@@ -181,13 +181,13 @@ def _seed_agent_policies(db: Session) -> None:
             priority=3,
         ),
         Policy(
-            name="agent-shell-allow",
-            description="General shell under governance",
+            name="agent-shell-approval",
+            description="General shell execution requires approval by default",
             action_pattern="shell_exec",
             resource_pattern="*",
-            decision="allow",
-            risk_level="medium",
-            required_approvals="0",
+            decision="require_approval",
+            risk_level="high",
+            required_approvals="1",
             priority=40,
         ),
         Policy(
@@ -231,9 +231,25 @@ def _seed_agent_policies(db: Session) -> None:
             priority=15,
         ),
     ]
+    retired_names = ("agent-allow-file-write", "agent-shell-allow")
+    for name in retired_names:
+        existing = db.query(Policy).filter_by(name=name).first()
+        if existing is not None:
+            existing.is_active = False
+
     for p in wanted:
-        if db.query(Policy).filter_by(name=p.name).first() is None:
+        existing = db.query(Policy).filter_by(name=p.name).first()
+        if existing is None:
             db.add(p)
+            continue
+        existing.description = p.description
+        existing.action_pattern = p.action_pattern
+        existing.resource_pattern = p.resource_pattern
+        existing.decision = p.decision
+        existing.risk_level = p.risk_level
+        existing.required_approvals = p.required_approvals
+        existing.priority = p.priority
+        existing.is_active = True
     db.commit()
 
 

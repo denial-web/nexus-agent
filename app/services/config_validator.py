@@ -63,6 +63,15 @@ def _check_security(settings: Settings, is_prod: bool, issues: list[ConfigIssue]
             )
         )
 
+    if not settings.APPROVAL_REVIEWERS.strip():
+        issues.append(
+            ConfigIssue(
+                "error",
+                "APPROVAL_REVIEWERS must be set in production/beta so approval votes are restricted "
+                "to configured reviewer identities.",
+            )
+        )
+
     keys = [k.strip() for k in settings.NEXUS_API_KEY.split(",") if k.strip()]
     if len(keys) != len(set(keys)):
         issues.append(

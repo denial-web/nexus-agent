@@ -148,6 +148,7 @@ class TestProductionConfig:
     def test_prod_ok_with_api_key(self, monkeypatch):
         monkeypatch.setattr(settings, "NEXUS_API_KEY", "my-secret")
         monkeypatch.setattr(settings, "SESSION_SECRET", "test-secret")
+        monkeypatch.setattr(settings, "APPROVAL_REVIEWERS", "alice,bob")
         monkeypatch.setattr(settings, "ENVIRONMENT", "production")
         from app.main import _validate_startup_config
 

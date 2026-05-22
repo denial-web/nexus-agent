@@ -357,6 +357,75 @@ def test_agent_resume_missing_trace(client) -> None:
     assert r.status_code == 404
 
 
+def test_agent_resume_rejects_approval_payload_tampering(
+    client,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.main import _seed_agent_policies
+    from app.models.approval_log import ApprovalRequest
+    from app.models.policy import Policy
+    from app.models.trace import Trace
+
+    _mock_env(monkeypatch)
+    for policy in db_session.query(Policy).filter(Policy.name.in_(("test-allow-shell",))).all():
+        policy.is_active = False
+    db_session.commit()
+    _seed_agent_policies(db_session)
+    monkeypatch.setattr("app.agent.agent_loop.settings.AGENT_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr("app.agent.agent_loop.settings.APPROVAL_QUORUM", 1)
+    _reset_provider()
+
+    def _shell_once(step_index: int, user_prompt: str) -> dict:
+        if step_index == 0:
+            return {
+                "action": "tool_call",
+                "tool": "shell_exec",
+                "arguments": {"command": "echo original"},
+            }
+        return {"action": "final_answer", "content": "Done."}
+
+    monkeypatch.setattr("app.agent.agent_loop._mock_agent_action", _shell_once)
+
+    run_resp = client.post(
+        "/api/agent/agent/run",
+        json={"prompt": "Run a shell command", "model_id": "mock"},
+    )
+    assert run_resp.status_code == 200
+    data = run_resp.json()
+    assert data["status"] == "pending_approval"
+    trace_id = data["trace_id"]
+    req_id = data["approval_request_id"]
+
+    db_session.expire_all()
+    approval = db_session.query(ApprovalRequest).filter_by(id=req_id).first()
+    assert approval is not None
+    assert approval.token_scope["action_hash"]
+
+    trace = db_session.query(Trace).filter_by(id=trace_id).first()
+    assert trace is not None
+    tampered_state = dict(trace.agent_state)
+    tampered_pending = dict(tampered_state["pending_tool"])
+    tampered_args = dict(tampered_pending["arguments"])
+    tampered_args["command"] = "echo tampered"
+    tampered_pending["arguments"] = tampered_args
+    tampered_state["pending_tool"] = tampered_pending
+    trace.agent_state = tampered_state
+    db_session.commit()
+
+    vote = client.post(
+        f"/api/governance/approve/{req_id}",
+        json={"approver_id": "alice", "decision": "approve"},
+    )
+    assert vote.status_code == 200
+    assert vote.json()["status"] == "approved"
+
+    resume = client.post("/api/agent/agent/resume", json={"trace_id": trace_id})
+    assert resume.status_code == 400
+    assert "hash" in resume.json()["detail"].lower()
+
+
 # ── Trajectory export ───────────────────────────────────────────────
 
 

@@ -218,6 +218,54 @@ def test_list_policies(client):
     assert len(resp.json()["policies"]) >= 1
 
 
+def test_default_seeded_tool_policies_require_approval(db_session):
+    from app.core.covernor.policy_engine import evaluate_action
+    from app.main import _seed_agent_policies
+
+    for policy in (
+        db_session.query(Policy)
+        .filter(Policy.name.in_(("test-allow-file-write", "test-allow-shell")))
+        .all()
+    ):
+        policy.is_active = False
+    db_session.commit()
+    _seed_agent_policies(db_session)
+
+    file_read = evaluate_action("file_read", "README.md", db_session=db_session)
+    file_write = evaluate_action("file_write", "out.txt", db_session=db_session)
+    shell = evaluate_action("shell_exec", "echo hello", db_session=db_session)
+    destructive_shell = evaluate_action("shell_exec", "rm -rf tmp", db_session=db_session)
+
+    assert file_read.decision == "allow"
+    assert file_write.decision == "require_approval"
+    assert shell.decision == "require_approval"
+    assert destructive_shell.decision in {"require_approval", "deny"}
+    assert destructive_shell.risk_level == "high"
+
+
+def test_same_api_key_cannot_forge_second_reviewer(client, monkeypatch, require_approval_policy):
+    monkeypatch.setattr("app.config.settings.NEXUS_API_KEY", "beta-key")
+
+    headers = {"X-API-Key": "beta-key"}
+    run_resp = client.post("/api/agent/run", json={"prompt": "Need approval"}, headers=headers)
+    assert run_resp.status_code == 200
+    req_id = run_resp.json()["approval_request_id"]
+
+    first = client.post(
+        f"/api/governance/approve/{req_id}",
+        json={"approver_id": "alice", "decision": "approve"},
+        headers=headers,
+    )
+    second = client.post(
+        f"/api/governance/approve/{req_id}",
+        json={"approver_id": "bob", "decision": "approve"},
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+
+
 def test_governance_training_queue_alias(client):
     resp = client.get("/api/governance/training/queue")
     assert resp.status_code == 200

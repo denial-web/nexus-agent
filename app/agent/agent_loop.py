@@ -28,6 +28,7 @@ from app.core.immune.scanner import Verdict, harden_prompt, scan_input, scan_out
 from app.core.llm.provider import _resolve_route, generate
 from app.core.training.labeler import push_failure
 from app.metrics import record_critic_scores
+from app.services.approval import approval_token_scope, validate_resume_approval
 
 logger = logging.getLogger(__name__)
 
@@ -577,16 +578,31 @@ def run_agent(
         # trail and must survive the pause/resume cycle. Restore them
         # onto the fresh AgentRunResult so _update_trace_final and
         # _episode_persist don't overwrite the saved list with NULL.
+        paused_status = None
         if db_session:
             from app.models.trace import Trace as _PausedTrace
 
             paused = db_session.query(_PausedTrace).filter_by(id=trace_id).first()
             if paused:
+                paused_status = paused.status
                 if paused.beliefs_used:
                     result.beliefs_used = list(paused.beliefs_used)
                 if paused.beliefs_formed:
                     result.beliefs_formed = list(paused.beliefs_formed)
         pending = resume_state.get("pending_tool")
+        needs_validation = bool(pending) or (
+            bool(resume_state.get("pending_final")) and paused_status == "pending_agent_resume"
+        )
+        ok, validation_error = (
+            validate_resume_approval(db_session, trace_id, resume_state)
+            if db_session and needs_validation
+            else (True, None)
+        )
+        if not ok:
+            result.status = "blocked"
+            result.error = validation_error or "Resume approval validation failed"
+            result.latency_ms = _elapsed(start)
+            return result
         if pending:
             tool_name = str(pending["tool"])
             args = pending.get("arguments") or {}
@@ -1060,7 +1076,7 @@ def _create_approval(
         required_approvals=str(required),
         received_approvals="0",
         status="pending",
-        token_scope={"trace_id": trace_id, "action": action_type},
+        token_scope=approval_token_scope(trace_id, action_type, payload),
         expires_at=datetime.now(UTC) + timedelta(hours=24),
     )
     db.add(approval)

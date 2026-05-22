@@ -221,6 +221,11 @@ def resume_agentic(req: AgentResumeRequest, db: Session = Depends(get_db)) -> di
     prompt = row.prompt or ""
     resume_state = row.agent_state
     if isinstance(resume_state, dict):
+        from app.services.approval import validate_resume_approval
+
+        ok, validation_error = validate_resume_approval(db, row.id, resume_state)
+        if not ok:
+            raise HTTPException(status_code=400, detail=validation_error or "Resume approval validation failed")
         r = run_agent(
             prompt=prompt,
             session_id=row.session_id,
