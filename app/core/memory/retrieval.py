@@ -89,9 +89,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def _semantic_rank(
-    query: RetrievalQuery, beliefs: list[Belief]
-) -> list[tuple[str, float]]:
+def _semantic_rank(query: RetrievalQuery, beliefs: list[Belief]) -> list[tuple[str, float]]:
     if not query.embedding:
         return []
     scored: list[tuple[str, float]] = []
@@ -104,9 +102,7 @@ def _semantic_rank(
     return [(bid, s) for bid, s in scored if s > 0.0]
 
 
-def _lexical_rank(
-    query: RetrievalQuery, beliefs: list[Belief]
-) -> list[tuple[str, float]]:
+def _lexical_rank(query: RetrievalQuery, beliefs: list[Belief]) -> list[tuple[str, float]]:
     """Tiny BM25-ish over keywords + predicate. Not a real BM25 — we don't
     care about term frequency inside keywords lists, just coverage."""
     query_tokens = set(_tokenize(query.text))
@@ -133,9 +129,7 @@ def _lexical_rank(
     return scored
 
 
-def _entity_rank(
-    query: RetrievalQuery, beliefs: list[Belief]
-) -> list[tuple[str, float]]:
+def _entity_rank(query: RetrievalQuery, beliefs: list[Belief]) -> list[tuple[str, float]]:
     if not query.entities and not query.predicates:
         return []
     entities = set(query.entities)
@@ -153,9 +147,7 @@ def _entity_rank(
     return scored
 
 
-def _episodic_rank(
-    query: RetrievalQuery, beliefs: list[Belief]
-) -> list[tuple[str, float]]:
+def _episodic_rank(query: RetrievalQuery, beliefs: list[Belief]) -> list[tuple[str, float]]:
     """Beliefs formed in the same session or by the same user win here.
 
     This is what gives an agent "stickiness" within a session — recent
@@ -181,16 +173,19 @@ def _confidence_rank(beliefs: list[Belief]) -> list[tuple[str, float]]:
     """Global tie-breaker — prefer strongly-held beliefs."""
     from app.core.memory.confidence import BetaConfidence
 
-    scored = [
-        (
-            b.id,
-            BetaConfidence(
-                alpha=float(b.confidence_alpha or 1.0),
-                beta=float(b.confidence_beta or 1.0),
-            ).strength(),
+    scored: list[tuple[str, float]] = []
+    for b in beliefs:
+        if not b.id:
+            continue
+        scored.append(
+            (
+                b.id,
+                BetaConfidence(
+                    alpha=float(b.confidence_alpha or 1.0),
+                    beta=float(b.confidence_beta or 1.0),
+                ).strength(),
+            )
         )
-        for b in beliefs
-    ]
     scored.sort(key=lambda x: x[1], reverse=True)
     return scored
 
@@ -254,10 +249,7 @@ def retrieve(
         reverse=True,
     )
     top = ordered[: max(1, query.limit)]
-    return [
-        ScoredBelief(belief=by_id[bid], rrf_score=score, signals=sig)
-        for bid, (score, sig) in top
-    ]
+    return [ScoredBelief(belief=by_id[bid], rrf_score=score, signals=sig) for bid, (score, sig) in top]
 
 
 # ---------------------------------------------------------------------------

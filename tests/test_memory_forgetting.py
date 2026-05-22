@@ -21,7 +21,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from app.core.memory.confidence import BetaConfidence
 from app.core.memory.forgetting import (
     _FALLBACK_HALFLIFE,
     DecayOutcome,
@@ -84,9 +83,7 @@ class TestParseDuration:
 
 class TestParseDecayProfile:
     def test_round_trip(self) -> None:
-        profile = parse_decay_profile(
-            "identity=inf,preference=180d,state=4h,context=1h"
-        )
+        profile = parse_decay_profile("identity=inf,preference=180d,state=4h,context=1h")
         assert profile["identity"] is None
         assert profile["preference"] == timedelta(days=180)
         assert profile["state"] == timedelta(hours=4)
@@ -182,9 +179,7 @@ class TestDecayBelief:
         assert b.confidence_alpha == 18.0
         assert b.confidence_beta == 2.0
 
-    def test_infinite_halflife_is_skipped(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_infinite_halflife_is_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         b = _belief(entity_type="identity")
         profile = {"identity": None}
@@ -193,9 +188,7 @@ class TestDecayBelief:
         assert out.ratio == 1.0
         assert out.after == out.before
 
-    def test_does_not_mutate_row(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_does_not_mutate_row(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         origin = datetime(2025, 1, 1, tzinfo=UTC)
         b = _belief(observed_at=origin)
@@ -209,9 +202,7 @@ class TestDecayBelief:
         assert out.after.alpha < out.before.alpha
         assert out.after.beta < out.before.beta
 
-    def test_decay_preserves_mean(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_decay_preserves_mean(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Scaling α and β by the same ratio leaves α/(α+β) invariant.
 
         This is exactly WHY the tombstone floor uses strength rather
@@ -226,26 +217,18 @@ class TestDecayBelief:
         out = decay_belief(b, now=now, profile=profile)
         assert out.before.mean == pytest.approx(out.after.mean, abs=1e-9)
 
-    def test_effective_sample_size_decays_with_age(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_effective_sample_size_decays_with_age(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         origin = datetime(2025, 1, 1, tzinfo=UTC)
         b = _belief(observed_at=origin)
         profile = {"preference": timedelta(days=30)}
         # Further out in time should yield strictly lower effective
         # (α+β) — this is the metric we use for tombstoning.
-        ss_fresh = effective_sample_size(
-            b, now=origin + timedelta(days=1), profile=profile
-        )
-        ss_old = effective_sample_size(
-            b, now=origin + timedelta(days=365), profile=profile
-        )
+        ss_fresh = effective_sample_size(b, now=origin + timedelta(days=1), profile=profile)
+        ss_old = effective_sample_size(b, now=origin + timedelta(days=365), profile=profile)
         assert ss_fresh > ss_old
 
-    def test_naive_observed_at_treated_as_utc(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_naive_observed_at_treated_as_utc(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         # SQLite can hand back naive datetimes — must not raise
         naive = datetime(2025, 1, 1)
@@ -258,9 +241,7 @@ class TestDecayBelief:
 
 
 class TestEffectiveSampleSize:
-    def test_matches_decay_outcome(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_matches_decay_outcome(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         b = _belief()
         now = datetime.now(UTC)
@@ -270,9 +251,7 @@ class TestEffectiveSampleSize:
         actual = effective_sample_size(b, now=now, profile=profile)
         assert expected == pytest.approx(actual, abs=1e-12)
 
-    def test_infinite_halflife_returns_raw_total(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_infinite_halflife_returns_raw_total(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         b = _belief(alpha=10.0, beta=2.0, entity_type="identity")
         profile = {"identity": None}
@@ -286,18 +265,14 @@ class TestEffectiveSampleSize:
 
 
 class TestRunForgetSweep:
-    def test_noop_when_flag_off(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_noop_when_flag_off(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", False)
         out = run_forget_sweep(db_session)
         assert isinstance(out, ForgetSweepOutcome)
         assert out.scanned == 0
         assert out.tombstoned == 0
 
-    def test_sweep_tombstones_aged_weak_rows(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_sweep_tombstones_aged_weak_rows(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         monkeypatch.setattr(
             "app.config.settings.MEMORY_DECAY_PROFILE",
@@ -338,13 +313,9 @@ class TestRunForgetSweep:
         assert refreshed_old.superseded_at is not None
         assert refreshed_fresh.superseded_at is None
 
-    def test_infinite_halflife_never_tombstoned(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_infinite_halflife_never_tombstoned(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
-        monkeypatch.setattr(
-            "app.config.settings.MEMORY_DECAY_PROFILE", "identity=inf"
-        )
+        monkeypatch.setattr("app.config.settings.MEMORY_DECAY_PROFILE", "identity=inf")
         uid = f"sweep-inf-{uuid.uuid4().hex[:6]}"
         b = _belief(
             alpha=1.1,
@@ -363,13 +334,9 @@ class TestRunForgetSweep:
         refreshed = db_session.query(Belief).filter_by(id=b.id).one()
         assert refreshed.superseded_at is None
 
-    def test_dry_run_does_not_persist(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_dry_run_does_not_persist(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
-        monkeypatch.setattr(
-            "app.config.settings.MEMORY_DECAY_PROFILE", "preference=1h"
-        )
+        monkeypatch.setattr("app.config.settings.MEMORY_DECAY_PROFILE", "preference=1h")
         uid = f"sweep-dry-{uuid.uuid4().hex[:6]}"
         b = _belief(
             alpha=2.0,
@@ -381,9 +348,7 @@ class TestRunForgetSweep:
         db_session.add(b)
         db_session.flush()
 
-        out = run_forget_sweep(
-            db_session, now=datetime.now(UTC), dry_run=True
-        )
+        out = run_forget_sweep(db_session, now=datetime.now(UTC), dry_run=True)
         db_session.flush()
 
         assert out.dry_run is True
@@ -391,14 +356,10 @@ class TestRunForgetSweep:
         refreshed = db_session.query(Belief).filter_by(id=b.id).one()
         assert refreshed.superseded_at is None  # but didn't
 
-    def test_idempotent_at_frozen_now(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_idempotent_at_frozen_now(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         """Pass two at the same `now` tombstones nothing new."""
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
-        monkeypatch.setattr(
-            "app.config.settings.MEMORY_DECAY_PROFILE", "preference=1h"
-        )
+        monkeypatch.setattr("app.config.settings.MEMORY_DECAY_PROFILE", "preference=1h")
         uid = f"sweep-idem-{uuid.uuid4().hex[:6]}"
         b = _belief(
             alpha=2.0,
@@ -419,9 +380,7 @@ class TestRunForgetSweep:
         assert out1.tombstoned >= 1
         assert out2.tombstoned == 0  # nothing new to tombstone
 
-    def test_bad_sample_size_floor_rejected(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_bad_sample_size_floor_rejected(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         with pytest.raises(ValueError):
             run_forget_sweep(db_session, sample_size_floor=-0.1)
@@ -433,22 +392,16 @@ class TestRunForgetSweep:
 
 
 class TestForgetByEntity:
-    def test_noop_when_flag_off(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_noop_when_flag_off(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", False)
         assert forget_by_entity(db_session, entity="user:x") == 0
 
-    def test_requires_entity(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_requires_entity(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         with pytest.raises(ValueError):
             forget_by_entity(db_session, entity="")
 
-    def test_tombstones_matching_rows(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_tombstones_matching_rows(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         uid = f"forget-entity-{uuid.uuid4().hex[:6]}"
         entity = f"user:{uid}"
@@ -460,9 +413,7 @@ class TestForgetByEntity:
         db_session.add_all([b1, b2])
         db_session.flush()
 
-        n = forget_by_entity(
-            db_session, entity=entity, user_id=uid, predicate="prefers"
-        )
+        n = forget_by_entity(db_session, entity=entity, user_id=uid, predicate="prefers")
         db_session.flush()
         assert n == 1
 
@@ -471,9 +422,7 @@ class TestForgetByEntity:
         assert r1.superseded_at is not None
         assert r2.superseded_at is None
 
-    def test_user_scope_isolation(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_user_scope_isolation(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         """Tenant A cannot forget tenant B's beliefs."""
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
         suffix = uuid.uuid4().hex[:6]
@@ -498,9 +447,7 @@ class TestForgetByEntity:
         assert r_a.superseded_at is not None
         assert r_b.superseded_at is None
 
-    def test_forgets_globals_under_user_scope(
-        self, db_session, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_forgets_globals_under_user_scope(self, db_session, monkeypatch: pytest.MonkeyPatch) -> None:
         """user_id IS NULL rows count as 'everyone's' and are fair game
         when a user asks to forget — they see them in retrieval."""
         monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)

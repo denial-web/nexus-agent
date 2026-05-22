@@ -55,12 +55,8 @@ class TestFlagGating:
 class TestSignalBehavior:
     def test_entity_match_outranks_lexical_only(self):
         entity_hit = FakeBelief(id="entity", entity="user:alice", keywords=["x"])
-        lexical_hit = FakeBelief(
-            id="lexical", entity="user:bob", keywords=["hello", "world"]
-        )
-        query = RetrievalQuery(
-            text="hello world", entities=["user:alice"], limit=2
-        )
+        lexical_hit = FakeBelief(id="lexical", entity="user:bob", keywords=["hello", "world"])
+        query = RetrievalQuery(text="hello world", entities=["user:alice"], limit=2)
         result = retrieve(query, [entity_hit, lexical_hit])
         assert result[0].belief.id == "entity"
 
@@ -103,12 +99,8 @@ class TestFusion:
             session_id="S-1",
             user_id="U-1",
         )
-        lexical_only = FakeBelief(
-            id="lex_only", entity="user:bob", keywords=["api", "keys"]
-        )
-        entity_only = FakeBelief(
-            id="ent_only", entity="user:alice", keywords=["foo"]
-        )
+        lexical_only = FakeBelief(id="lex_only", entity="user:bob", keywords=["api", "keys"])
+        entity_only = FakeBelief(id="ent_only", entity="user:alice", keywords=["foo"])
         query = RetrievalQuery(
             text="api keys",
             entities=["user:alice"],
@@ -137,12 +129,8 @@ class TestFusion:
         assert "confidence" in signals
 
     def test_limit_is_respected(self):
-        beliefs = [
-            FakeBelief(id=f"b{i}", keywords=["shared"]) for i in range(10)
-        ]
-        result = retrieve(
-            RetrievalQuery(text="shared", limit=3), beliefs
-        )
+        beliefs = [FakeBelief(id=f"b{i}", keywords=["shared"]) for i in range(10)]
+        result = retrieve(RetrievalQuery(text="shared", limit=3), beliefs)
         assert len(result) == 3
 
 

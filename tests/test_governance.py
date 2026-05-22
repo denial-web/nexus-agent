@@ -222,11 +222,7 @@ def test_default_seeded_tool_policies_require_approval(db_session):
     from app.core.covernor.policy_engine import evaluate_action
     from app.main import _seed_agent_policies
 
-    for policy in (
-        db_session.query(Policy)
-        .filter(Policy.name.in_(("test-allow-file-write", "test-allow-shell")))
-        .all()
-    ):
+    for policy in db_session.query(Policy).filter(Policy.name.in_(("test-allow-file-write", "test-allow-shell"))).all():
         policy.is_active = False
     db_session.commit()
     _seed_agent_policies(db_session)

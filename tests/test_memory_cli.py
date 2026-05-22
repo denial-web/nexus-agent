@@ -20,11 +20,9 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
+import app.cli as cli
 import httpx
 import pytest
-
-import app.cli as cli
-
 
 # ────────────────────────────────────────────────────────────────────────
 # Shared test scaffolding
@@ -53,9 +51,7 @@ class FakeResponse:
                 text=self.text if not isinstance(self.payload, dict | list) else None,
                 request=req,
             )
-            raise httpx.HTTPStatusError(
-                f"{self.status_code}", request=req, response=resp
-            )
+            raise httpx.HTTPStatusError(f"{self.status_code}", request=req, response=resp)
 
     def json(self) -> Any:
         return self.payload
@@ -191,9 +187,7 @@ class TestMemoryRecall:
         assert "[live]" in out
 
     def test_empty_result(self, stub_httpx, capsys):
-        stub_httpx["script"]["get"].append(
-            FakeResponse(200, {"total": 0, "limit": 50, "offset": 0, "beliefs": []})
-        )
+        stub_httpx["script"]["get"].append(FakeResponse(200, {"total": 0, "limit": 50, "offset": 0, "beliefs": []}))
         rc = _run(["memory", "recall"])
         out = capsys.readouterr().out
         assert rc == 0

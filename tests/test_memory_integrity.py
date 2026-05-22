@@ -24,7 +24,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from app.config import settings
 from app.core.memory.confidence import from_mean_and_strength
 from app.core.memory.integrity import (
@@ -169,9 +168,7 @@ class TestVerifyChain:
         assert alice_result.verified is True, "Bob's break leaked into Alice's scope"
         assert bob_result.verified is False
 
-    def test_null_user_chain_distinct_from_default_sentinel(
-        self, db_session, memory_on
-    ):
+    def test_null_user_chain_distinct_from_default_sentinel(self, db_session, memory_on):
         """`user_id=None` (explicit) verifies only the NULL-user chain.
         This is distinct from the default `user_id=...` sentinel which
         walks every chain — conflating the two would either skip the
@@ -208,9 +205,7 @@ class TestVerifyChain:
         follows in the same chain."""
         _seed(db_session)
         _write_pref(db_session, user="broken", predicate="p1", value="ok")
-        bad_id = _write_pref(
-            db_session, user="broken", predicate="p2", value="ok"
-        )
+        bad_id = _write_pref(db_session, user="broken", predicate="p2", value="ok")
         _write_pref(db_session, user="broken", predicate="p3", value="ok")
 
         target = db_session.query(Belief).filter(Belief.id == bad_id).one()
@@ -329,18 +324,12 @@ class TestAsOf:
             observed_at=t2,
         )
 
-        later = (
-            db_session.query(Belief)
-            .filter(Belief.user_id == "asof", Belief.predicate == "p2")
-            .one()
-        )
+        later = db_session.query(Belief).filter(Belief.user_id == "asof", Belief.predicate == "p2").one()
         later.value = "tampered"
         db_session.commit()
 
         scoped = verify_chain(db_session, user_id="asof", as_of=t1)
-        assert scoped.verified is True, (
-            "as_of should have excluded the tampered later row"
-        )
+        assert scoped.verified is True, "as_of should have excluded the tampered later row"
         assert scoped.rows_checked == 1
 
         full = verify_chain(db_session, user_id="asof")
@@ -355,27 +344,17 @@ class TestComputeBeliefHash:
         positive."""
         _seed(db_session)
         _write_pref(db_session, user="hash-check", value="v1")
-        row = (
-            db_session.query(Belief)
-            .filter(Belief.user_id == "hash-check")
-            .one()
-        )
+        row = db_session.query(Belief).filter(Belief.user_id == "hash-check").one()
         assert compute_belief_hash(row) == row.belief_hash
 
-    def test_sqlite_naive_observed_at_still_reproduces(
-        self, db_session, memory_on
-    ):
+    def test_sqlite_naive_observed_at_still_reproduces(self, db_session, memory_on):
         """SQLite strips tzinfo on round-trip. The verifier must
         re-attach UTC so `observed_at.isoformat()` reproduces the
         `+00:00`-suffixed string the writer hashed. If we forgot to
         do that, every SQLite-stored row would spuriously fail."""
         _seed(db_session)
         _write_pref(db_session, user="tz-check", value="v")
-        row = (
-            db_session.query(Belief)
-            .filter(Belief.user_id == "tz-check")
-            .one()
-        )
+        row = db_session.query(Belief).filter(Belief.user_id == "tz-check").one()
         # On SQLite the column returns naive; on Postgres tz-aware.
         # Either way the verifier must produce the same hash.
         recomputed = compute_belief_hash(row)
@@ -411,9 +390,7 @@ class TestIntegrityEndpointGovernance:
         # client fixture triggered lifespan → memory policies are seeded.
         # Remove the read-allow rule to exercise default-deny; keep the
         # write-allow rule so we can still plant a belief.
-        db_session.query(Policy).filter(
-            Policy.name == "memory-allow-integrity-read"
-        ).delete()
+        db_session.query(Policy).filter(Policy.name == "memory-allow-integrity-read").delete()
         db_session.commit()
 
         _write_pref(db_session, user="no-policy", value="v")
@@ -424,14 +401,10 @@ class TestIntegrityEndpointGovernance:
         assert body["error"]["code"] == "governance_denied"
         assert "integrity" in body["error"]["message"].lower()
 
-    def test_200_when_seeded_policy_present(
-        self, client, db_session, memory_on
-    ):
+    def test_200_when_seeded_policy_present(self, client, db_session, memory_on):
         _seed(db_session)
         _write_pref(db_session, user="with-policy", value="v")
-        r = client.get(
-            "/v1/memory/integrity", params={"user_id": "with-policy"}
-        )
+        r = client.get("/v1/memory/integrity", params={"user_id": "with-policy"})
         assert r.status_code == 200
         body = r.json()
         assert body["verified"] is True
@@ -450,9 +423,7 @@ class TestIntegrityEndpointScope:
         assert body["scope_user_ids"] == ["alice"]
         assert body["checked_user_count"] == 1
 
-    def test_default_scope_walks_all_chains(
-        self, client, db_session, memory_on
-    ):
+    def test_default_scope_walks_all_chains(self, client, db_session, memory_on):
         _seed(db_session)
         _write_pref(db_session, user="u1", value="v1")
         _write_pref(db_session, user="u2", value="v2")
@@ -464,27 +435,21 @@ class TestIntegrityEndpointScope:
         assert body["rows_checked"] == 3
         assert set(body["scope_user_ids"]) == {"u1", "u2", None}
 
-    def test_scope_all_false_targets_null_user_only(
-        self, client, db_session, memory_on
-    ):
+    def test_scope_all_false_targets_null_user_only(self, client, db_session, memory_on):
         """`scope_all=false` with no `user_id` = audit the NULL-user
         chain. Distinct from the default so operators can target it."""
         _seed(db_session)
         _write_pref(db_session, user="u1", value="v1")
         _write_pref(db_session, user=None, value="shared")
 
-        r = client.get(
-            "/v1/memory/integrity", params={"scope_all": "false"}
-        )
+        r = client.get("/v1/memory/integrity", params={"scope_all": "false"})
         body = r.json()
         assert body["rows_checked"] == 1
         assert body["scope_user_ids"] == [None]
 
 
 class TestIntegrityEndpointBrokenChain:
-    def test_broken_chain_returns_200_with_structured_result(
-        self, client, db_session, memory_on
-    ):
+    def test_broken_chain_returns_200_with_structured_result(self, client, db_session, memory_on):
         """A broken chain is an audit FINDING, not an HTTP error.
         Dashboards need 200 + structured body to render the break;
         5xx would look like the endpoint itself was down."""
@@ -494,9 +459,7 @@ class TestIntegrityEndpointBrokenChain:
         row.value = "tampered"
         db_session.commit()
 
-        r = client.get(
-            "/v1/memory/integrity", params={"user_id": "bad-chain"}
-        )
+        r = client.get("/v1/memory/integrity", params={"user_id": "bad-chain"})
         assert r.status_code == 200
         body = r.json()
         assert body["verified"] is False

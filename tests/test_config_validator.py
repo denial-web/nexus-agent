@@ -88,9 +88,7 @@ class TestSecurityChecks:
         )
         errors = _errors(validate(s))
         security_errors = [
-            e
-            for e in errors
-            if "NEXUS_API_KEY" in e or "SESSION_SECRET" in e or "APPROVAL_REVIEWERS" in e
+            e for e in errors if "NEXUS_API_KEY" in e or "SESSION_SECRET" in e or "APPROVAL_REVIEWERS" in e
         ]
         assert not security_errors
 

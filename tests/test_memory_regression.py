@@ -45,8 +45,7 @@ GOLDEN_PATH = FIXTURES_DIR / "pipeline_golden.json"
 #   - produce a consistent mock LLM response (depends only on len(prompt))
 #   - exercise most pipeline stages (critic eval, governance, output scan)
 _GOLDEN_PROMPT = (
-    "Summarize the core idea of the dependency inversion principle "
-    "in software engineering in two sentences."
+    "Summarize the core idea of the dependency inversion principle in software engineering in two sentences."
 )
 _GOLDEN_SESSION = "golden-fixture-session-0001"
 
@@ -104,9 +103,7 @@ def _pretty(d) -> str:
 def _diff(actual, expected) -> str:
     a = _pretty(actual).splitlines()
     e = _pretty(expected).splitlines()
-    return "\n".join(
-        unified_diff(e, a, fromfile="golden", tofile="actual", lineterm="")
-    )
+    return "\n".join(unified_diff(e, a, fromfile="golden", tofile="actual", lineterm=""))
 
 
 # ---------------------------------------------------------------------------
@@ -142,19 +139,13 @@ class TestMemoryRegressionTierA:
             run("What is 2+2?", db_session=db_session)
 
         memory_calls = [
-            (a, r)
-            for (a, r) in seen
-            if a.startswith("memory")
-            or (r is not None and r.startswith("memory"))
+            (a, r) for (a, r) in seen if a.startswith("memory") or (r is not None and r.startswith("memory"))
         ]
         assert memory_calls == [], (
-            f"Pipeline must not evaluate memory:* actions when MEMORY_ENABLED=False. "
-            f"Saw: {memory_calls}"
+            f"Pipeline must not evaluate memory:* actions when MEMORY_ENABLED=False. Saw: {memory_calls}"
         )
         # Sanity check — we did intercept SOMETHING, so the spy is wired up.
-        assert len(seen) > 0, (
-            "evaluate_action spy saw zero calls — patching target is wrong."
-        )
+        assert len(seen) > 0, "evaluate_action spy saw zero calls — patching target is wrong."
 
     def test_no_belief_artifacts_on_trace(self, db_session):
         """Trace must not record belief/memory fields when memory is off."""
@@ -168,25 +159,18 @@ class TestMemoryRegressionTierA:
         # If they exist, they must be null/empty when memory is off.
         for attr in ("beliefs_formed", "beliefs_retrieved", "memory_summary"):
             value = getattr(trace, attr, None)
-            assert value in (None, [], {}, ""), (
-                f"trace.{attr} must be empty when memory off; got {value!r}"
-            )
+            assert value in (None, [], {}, ""), f"trace.{attr} must be empty when memory off; got {value!r}"
 
     def test_no_belief_rows_written(self, db_session):
         """Belief table (once it exists) must stay empty when memory is off."""
         try:
             from app.models.belief import Belief
         except ImportError:
-            pytest.skip(
-                "Belief model not yet implemented — skip until Phase 12A.W1 lands"
-            )
+            pytest.skip("Belief model not yet implemented — skip until Phase 12A.W1 lands")
 
         run("Another clean prompt for testing.", db_session=db_session)
         count = db_session.query(Belief).count()
-        assert count == 0, (
-            f"beliefs table must stay empty when MEMORY_ENABLED=False; "
-            f"got {count} rows"
-        )
+        assert count == 0, f"beliefs table must stay empty when MEMORY_ENABLED=False; got {count} rows"
 
     def test_pipeline_result_shape_unchanged(self, db_session):
         """PipelineResult must not grow new required fields when memory off."""
@@ -252,10 +236,7 @@ class TestMemoryRegressionTierB:
         if os.environ.get("NEXUS_UPDATE_GOLDEN") == "1":
             FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
             GOLDEN_PATH.write_text(_pretty(normalized) + "\n")
-            pytest.skip(
-                f"Golden updated at {GOLDEN_PATH}. Re-run without "
-                f"NEXUS_UPDATE_GOLDEN=1 to verify parity."
-            )
+            pytest.skip(f"Golden updated at {GOLDEN_PATH}. Re-run without NEXUS_UPDATE_GOLDEN=1 to verify parity.")
 
         assert GOLDEN_PATH.exists(), (
             f"Golden fixture missing at {GOLDEN_PATH}. Generate it with:\n"
@@ -269,6 +250,5 @@ class TestMemoryRegressionTierB:
                 "Pipeline output diverged from pre-memory golden fixture.\n"
                 "If the change is intentional and memory is still OFF by "
                 "default, regenerate with NEXUS_UPDATE_GOLDEN=1 and review "
-                "the diff carefully.\n\n"
-                + _diff(normalized, expected)
+                "the diff carefully.\n\n" + _diff(normalized, expected)
             )

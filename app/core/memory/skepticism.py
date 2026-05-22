@@ -183,9 +183,7 @@ def evaluate(
 
     cand_eff = _effective_confidence(candidate.confidence, candidate.source_type)
 
-    conflicts = [
-        p for p in prior_beliefs if _values_conflict(candidate.value, p.value)
-    ]
+    conflicts = [p for p in prior_beliefs if _values_conflict(candidate.value, p.value)]
 
     if not prior_beliefs:
         if cand_eff >= threshold:
@@ -211,28 +209,20 @@ def evaluate(
         conflicts,
         key=lambda p: _effective_confidence(p.confidence, p.source_type),
     )
-    conflict_eff = _effective_confidence(
-        strongest_conflict.confidence, strongest_conflict.source_type
-    )
+    conflict_eff = _effective_confidence(strongest_conflict.confidence, strongest_conflict.source_type)
     margin = threshold / 2.0
 
     if cand_eff >= threshold and cand_eff >= conflict_eff + margin:
         return SkepticismDecision(
             verdict="supersede",
-            reason=(
-                f"candidate_{cand_eff:.3f}_beats_prior_{conflict_eff:.3f}"
-                f"_by_margin_{margin:.3f}"
-            ),
+            reason=(f"candidate_{cand_eff:.3f}_beats_prior_{conflict_eff:.3f}_by_margin_{margin:.3f}"),
             required_confidence=threshold,
             contradicts=[c.id for c in conflicts],
         )
 
     return SkepticismDecision(
         verdict="reject",
-        reason=(
-            f"conflict_with_stronger_prior_{conflict_eff:.3f}"
-            f"_vs_candidate_{cand_eff:.3f}"
-        ),
+        reason=(f"conflict_with_stronger_prior_{conflict_eff:.3f}_vs_candidate_{cand_eff:.3f}"),
         required_confidence=threshold,
         contradicts=[c.id for c in conflicts],
     )

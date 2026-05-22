@@ -187,10 +187,7 @@ def _retrieve_beliefs(
             used_ids.append(b.id)
             confidence = b.confidence()
             value_preview = str(b.value)[:120]
-            lines.append(
-                f"- [{b.entity_type}, conf={confidence:.2f}] "
-                f"{b.entity} {b.predicate} = {value_preview}"
-            )
+            lines.append(f"- [{b.entity_type}, conf={confidence:.2f}] {b.entity} {b.predicate} = {value_preview}")
         return "\n".join(lines), used_ids
     except Exception:
         logger.debug("Belief retrieval failed", exc_info=True)
@@ -237,11 +234,7 @@ def _extract_and_persist_beliefs(
             source_trace_id=trace_id,
             extractor_version=EXTRACTOR_VERSION,
         )
-        formed_ids = [
-            o.belief_id
-            for o in outcomes
-            if o.belief_id and o.status in ("accepted", "superseded")
-        ]
+        formed_ids = [o.belief_id for o in outcomes if o.belief_id and o.status in ("accepted", "superseded")]
         if formed_ids:
             db.commit()
         return formed_ids
@@ -684,10 +677,7 @@ def run_agent(
     if episode_context:
         system += f"\n\nPast experience (use to guide your plan):\n{episode_context}"
     if belief_context:
-        system += (
-            "\n\nKnown beliefs about the user (high-confidence, current):\n"
-            f"{belief_context}"
-        )
+        system += f"\n\nKnown beliefs about the user (high-confidence, current):\n{belief_context}"
 
     if db_session and not resume_state:
         from app.models.trace import Trace

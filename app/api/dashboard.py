@@ -541,12 +541,7 @@ def memory_overview(request: Request, db: Session = Depends(get_db)) -> Response
         )
 
     stats = _memory_stats(db)
-    beliefs = (
-        db.query(Belief)
-        .order_by(Belief.observed_at.desc())
-        .limit(50)
-        .all()
-    )
+    beliefs = db.query(Belief).order_by(Belief.observed_at.desc()).limit(50).all()
     return templates.TemplateResponse(
         request,
         "memory.html",
@@ -569,11 +564,15 @@ def memory_integrity_page(request: Request, db: Session = Depends(get_db)) -> Re
     re-renders this template with a populated `result`.
     """
     csrf_token = _issue_csrf(request)
-    stats = _memory_stats(db) if settings.MEMORY_ENABLED else {
-        "total_live": 0,
-        "total_tombstoned": 0,
-        "distinct_chains": 0,
-    }
+    stats = (
+        _memory_stats(db)
+        if settings.MEMORY_ENABLED
+        else {
+            "total_live": 0,
+            "total_tombstoned": 0,
+            "distinct_chains": 0,
+        }
+    )
     return templates.TemplateResponse(
         request,
         "memory_integrity.html",
@@ -627,11 +626,15 @@ def memory_integrity_verify(
         return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
 
     csrf_new = _issue_csrf(request)
-    stats = _memory_stats(db) if settings.MEMORY_ENABLED else {
-        "total_live": 0,
-        "total_tombstoned": 0,
-        "distinct_chains": 0,
-    }
+    stats = (
+        _memory_stats(db)
+        if settings.MEMORY_ENABLED
+        else {
+            "total_live": 0,
+            "total_tombstoned": 0,
+            "distinct_chains": 0,
+        }
+    )
 
     if not settings.MEMORY_ENABLED:
         return templates.TemplateResponse(

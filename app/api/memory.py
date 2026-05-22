@@ -233,9 +233,7 @@ def list_beliefs(
     entity: str | None = Query(None, description="Exact entity match"),
     predicate: str | None = Query(None, description="Exact predicate match"),
     entity_type: str | None = Query(None, description="Exact entity_type match"),
-    include_tombstoned: bool = Query(
-        False, description="Include superseded rows (default: false)"
-    ),
+    include_tombstoned: bool = Query(False, description="Include superseded rows (default: false)"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -263,12 +261,7 @@ def list_beliefs(
         q = q.filter(Belief.entity_type == entity_type)
 
     total = q.count()
-    rows = (
-        q.order_by(Belief.observed_at.desc(), Belief.id.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+    rows = q.order_by(Belief.observed_at.desc(), Belief.id.desc()).offset(offset).limit(limit).all()
     now = datetime.now(UTC) if rows else None
     return ListResponse(
         total=total,
@@ -301,9 +294,7 @@ def belief_history(
 
     seed = db.query(Belief).filter(Belief.id == belief_id).first()
     if seed is None:
-        raise NexusAPIError(
-            404, "belief_not_found", f"No belief with id {belief_id!r}"
-        )
+        raise NexusAPIError(404, "belief_not_found", f"No belief with id {belief_id!r}")
 
     q = db.query(Belief).filter(
         Belief.entity == seed.entity,
@@ -343,9 +334,7 @@ def explain_belief(
 
     belief = db.query(Belief).filter(Belief.id == belief_id).first()
     if belief is None:
-        raise NexusAPIError(
-            404, "belief_not_found", f"No belief with id {belief_id!r}"
-        )
+        raise NexusAPIError(404, "belief_not_found", f"No belief with id {belief_id!r}")
 
     # Build the scope candidate set. Same filter as retrieval uses at
     # runtime — live rows within the belief's user scope.
@@ -382,9 +371,7 @@ def explain_belief(
         rrf_score=match.rrf_score,
         signals=[
             SignalBreakdown(signal=name, score=score)
-            for name, score in sorted(
-                match.signals.items(), key=lambda kv: kv[1], reverse=True
-            )
+            for name, score in sorted(match.signals.items(), key=lambda kv: kv[1], reverse=True)
         ],
         rank_in_scope=rank,
     )
@@ -452,18 +439,10 @@ def memory_stats(db: Session = Depends(get_db)) -> StatsResponse:
             decay_profile=_format_half_life(settings.MEMORY_DECAY_PROFILE),
         )
 
-    total_live = (
-        db.query(Belief).filter(Belief.superseded_at.is_(None)).count()
-    )
-    total_tombstoned = (
-        db.query(Belief).filter(Belief.superseded_at.isnot(None)).count()
-    )
+    total_live = db.query(Belief).filter(Belief.superseded_at.is_(None)).count()
+    total_tombstoned = db.query(Belief).filter(Belief.superseded_at.isnot(None)).count()
 
-    live_rows = (
-        db.query(Belief.entity_type, Belief.source_type)
-        .filter(Belief.superseded_at.is_(None))
-        .all()
-    )
+    live_rows = db.query(Belief.entity_type, Belief.source_type).filter(Belief.superseded_at.is_(None)).all()
     by_entity_type: dict[str, int] = {}
     by_source_type: dict[str, int] = {}
     for et, st in live_rows:

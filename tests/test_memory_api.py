@@ -139,9 +139,7 @@ class TestList:
         assert body["total"] == 1
         assert body["beliefs"][0]["entity"] == "user:api-iso-alice"
 
-    def test_list_excludes_tombstoned_by_default(
-        self, client, db_session, memory_on
-    ):
+    def test_list_excludes_tombstoned_by_default(self, client, db_session, memory_on):
         _seed(db_session)
         uid = "api-tomb-user"
         bid = _make_pref(db_session, user=uid)
@@ -201,9 +199,7 @@ class TestHistory:
         # the first write needs to be weak enough that a follow-up
         # user-stated belief can supersede it.
         _make_pref(db_session, user=uid, value="dark_mode", mean=0.6, strength=5.0)
-        bid2 = _make_pref(
-            db_session, user=uid, value="light_mode", mean=0.95, strength=40.0
-        )
+        bid2 = _make_pref(db_session, user=uid, value="light_mode", mean=0.95, strength=40.0)
 
         r = client.get(f"/v1/memory/{bid2}/history")
         assert r.status_code == 200
@@ -243,9 +239,7 @@ class TestHistory:
 
 
 class TestExplain:
-    def test_explain_returns_signal_breakdown(
-        self, client, db_session, memory_on
-    ):
+    def test_explain_returns_signal_breakdown(self, client, db_session, memory_on):
         _seed(db_session)
         uid = "api-explain-user"
         bid = _make_pref(db_session, user=uid)
@@ -276,9 +270,7 @@ class TestExplain:
 
 
 class TestForget:
-    def test_forget_tombstones_matching_beliefs(
-        self, client, db_session, memory_on
-    ):
+    def test_forget_tombstones_matching_beliefs(self, client, db_session, memory_on):
         _seed(db_session)
         uid = "api-forget-user"
         _make_pref(db_session, user=uid, value="dark_mode")
@@ -301,9 +293,7 @@ class TestForget:
         preds = [b["predicate"] for b in r_list.json()["beliefs"]]
         assert preds == ["likes"]
 
-    def test_forget_isolates_across_users(
-        self, client, db_session, memory_on
-    ):
+    def test_forget_isolates_across_users(self, client, db_session, memory_on):
         _seed(db_session)
         _make_pref(db_session, user="api-forget-alice")
         _make_pref(db_session, user="api-forget-bob")
@@ -337,9 +327,7 @@ class TestForget:
 
 
 class TestStats:
-    def test_stats_counts_live_and_tombstoned(
-        self, client, db_session, memory_on
-    ):
+    def test_stats_counts_live_and_tombstoned(self, client, db_session, memory_on):
         _seed(db_session)
         uid = "api-stats-user"
         b1 = _make_pref(db_session, user=uid, value="dark_mode")

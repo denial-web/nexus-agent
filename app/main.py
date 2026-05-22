@@ -294,12 +294,7 @@ def _seed_memory_policies(db: Session) -> None:
         "memory-allow-preference-write",
         "memory-allow-integrity-read",
     )
-    existing = {
-        row.name
-        for row in db.query(Policy.name)
-        .filter(Policy.name.in_(_WANTED_MEMORY_POLICY_NAMES))
-        .all()
-    }
+    existing = {row.name for row in db.query(Policy.name).filter(Policy.name.in_(_WANTED_MEMORY_POLICY_NAMES)).all()}
 
     wanted = [
         Policy(

@@ -121,12 +121,7 @@ def _latest_belief_hash_for_scope(
     We chain per-user so tenants have independent tamper-evident logs.
     A NULL user_id uses its own chain for system/shared beliefs.
     """
-    q = (
-        db.query(Belief.belief_hash)
-        .filter(Belief.user_id == user_id)
-        .order_by(Belief.observed_at.desc())
-        .limit(1)
-    )
+    q = db.query(Belief.belief_hash).filter(Belief.user_id == user_id).order_by(Belief.observed_at.desc()).limit(1)
     row = q.first()
     if row and row[0]:
         return row[0]
