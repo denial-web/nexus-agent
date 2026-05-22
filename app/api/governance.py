@@ -3,7 +3,7 @@
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -113,13 +113,17 @@ def list_pending_approvals(status: str = "pending", db: Session = Depends(get_db
 
 
 @router.post("/approve/{request_id}")
-def submit_vote(request_id: str, vote: ApprovalVoteRequest, db: Session = Depends(get_db)) -> dict:
+def submit_vote(request_id: str, vote: ApprovalVoteRequest, request: Request, db: Session = Depends(get_db)) -> dict:
     """Submit an approval or denial vote for a pending action."""
-    from app.services.approval import process_vote
+    from app.services.approval import process_vote, resolve_approver_identity
+
+    approver_identity, identity_error = resolve_approver_identity(request, vote.approver_id)
+    if identity_error or not approver_identity:
+        raise HTTPException(status_code=403, detail=identity_error or "Invalid approver identity")
 
     result = process_vote(
         request_id=request_id,
-        approver_id=vote.approver_id,
+        approver_id=approver_identity,
         decision=vote.decision,
         db=db,
     )

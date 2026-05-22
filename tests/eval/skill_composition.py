@@ -240,7 +240,7 @@ def _seed_skill_policies(db: Session) -> None:
             decision="allow",
             risk_level="medium",
             required_approvals="0",
-            priority=40,
+            priority=2,
         ),
         Policy(
             name="bench-allow-file-read",
@@ -250,7 +250,7 @@ def _seed_skill_policies(db: Session) -> None:
             decision="allow",
             risk_level="low",
             required_approvals="0",
-            priority=8,
+            priority=2,
         ),
         Policy(
             name="bench-allow-file-write",
@@ -260,7 +260,7 @@ def _seed_skill_policies(db: Session) -> None:
             decision="allow",
             risk_level="medium",
             required_approvals="0",
-            priority=8,
+            priority=2,
         ),
         # The governance moat. Priority lower (higher precedence) than
         # the broad shell allow so this wins the match. Resource is the
@@ -306,6 +306,19 @@ def _seed_skill_policies(db: Session) -> None:
     for p in defaults:
         if p.name not in existing:
             db.add(p)
+    db.commit()
+
+
+def _purge_benchmark_policies(db: Session) -> None:
+    names = [
+        "bench-allow-shell-exec",
+        "bench-allow-file-read",
+        "bench-allow-file-write",
+        "bench-deny-sensitive-path",
+        "bench-deny-sensitive-path-shadow",
+        "bench-deny-sensitive-path-ssh",
+    ]
+    db.query(Policy).filter(Policy.name.in_(names)).delete(synchronize_session=False)
     db.commit()
 
 
@@ -466,12 +479,14 @@ def seeded_skill_db(db_session):
     """Install the bench-specific policies + clear any prior benchmark
     skills. Isolated by unique policy names so the rest of the suite
     is unaffected."""
+    _purge_benchmark_policies(db_session)
     _seed_skill_policies(db_session)
     _purge_benchmark_skills(db_session)
     yield db_session
     # Per-test teardown — purge any skills this benchmark created so
     # downstream tests see a clean slate.
     _purge_benchmark_skills(db_session)
+    _purge_benchmark_policies(db_session)
 
 
 def test_skill_composition_exit_gate(seeded_skill_db, bench_workspace):

@@ -116,20 +116,14 @@ def _draft_preference(*, user_id: str, mean: float = 0.9, strength: float = 20.0
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_retrieve_beliefs_noop_when_flag_off(
-    db_session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_retrieve_beliefs_noop_when_flag_off(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", False)
-    text, ids = _retrieve_beliefs(
-        db_session, "dark mode question", user_id="alice", session_id="s1"
-    )
+    text, ids = _retrieve_beliefs(db_session, "dark mode question", user_id="alice", session_id="s1")
     assert text == ""
     assert ids == []
 
 
-def test_retrieve_beliefs_returns_top_k_for_user(
-    db_session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_retrieve_beliefs_returns_top_k_for_user(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", True)
     _seed_agent_and_memory_policies(db_session)
 
@@ -153,9 +147,7 @@ def test_retrieve_beliefs_returns_top_k_for_user(
     assert "prefers" in text
 
 
-def test_retrieve_beliefs_ignores_superseded_rows(
-    db_session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_retrieve_beliefs_ignores_superseded_rows(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", True)
     _seed_agent_and_memory_policies(db_session)
 
@@ -181,15 +173,11 @@ def test_retrieve_beliefs_ignores_superseded_rows(
     db_session.add(b)
     db_session.commit()
 
-    _, ids = _retrieve_beliefs(
-        db_session, "theme", user_id=uid, session_id="s1"
-    )
+    _, ids = _retrieve_beliefs(db_session, "theme", user_id=uid, session_id="s1")
     assert ids == []
 
 
-def test_retrieve_beliefs_isolates_users(
-    db_session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_retrieve_beliefs_isolates_users(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", True)
     _seed_agent_and_memory_policies(db_session)
 
@@ -201,12 +189,8 @@ def test_retrieve_beliefs_isolates_users(
     write_belief(_draft_preference(user_id=bob), db_session)
     db_session.commit()
 
-    _, alice_ids = _retrieve_beliefs(
-        db_session, "theme", user_id=alice, session_id="s"
-    )
-    _, bob_ids = _retrieve_beliefs(
-        db_session, "theme", user_id=bob, session_id="s"
-    )
+    _, alice_ids = _retrieve_beliefs(db_session, "theme", user_id=alice, session_id="s")
+    _, bob_ids = _retrieve_beliefs(db_session, "theme", user_id=bob, session_id="s")
     assert alice_ids and bob_ids
     assert set(alice_ids).isdisjoint(set(bob_ids))
 
@@ -216,9 +200,7 @@ def test_retrieve_beliefs_isolates_users(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_extract_and_persist_noop_when_flag_off(
-    db_session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_extract_and_persist_noop_when_flag_off(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", False)
     called: list[bool] = []
 
@@ -226,9 +208,7 @@ def test_extract_and_persist_noop_when_flag_off(
         called.append(True)
         return []
 
-    monkeypatch.setattr(
-        "app.core.memory.extractor.extract_beliefs", _should_not_run
-    )
+    monkeypatch.setattr("app.core.memory.extractor.extract_beliefs", _should_not_run)
     out = _extract_and_persist_beliefs(
         db_session,
         prompt="p",
@@ -241,9 +221,7 @@ def test_extract_and_persist_noop_when_flag_off(
     assert not called, "Extractor must not be called when MEMORY_ENABLED=False"
 
 
-def test_extract_and_persist_writes_accepted_beliefs(
-    db_session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_extract_and_persist_writes_accepted_beliefs(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", True)
     monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
     _seed_agent_and_memory_policies(db_session)
@@ -254,9 +232,7 @@ def test_extract_and_persist_writes_accepted_beliefs(
     def _fake_extract(**kwargs: object) -> list[BeliefDraft]:
         return drafts
 
-    monkeypatch.setattr(
-        "app.core.memory.extractor.extract_beliefs", _fake_extract
-    )
+    monkeypatch.setattr("app.core.memory.extractor.extract_beliefs", _fake_extract)
 
     ids = _extract_and_persist_beliefs(
         db_session,
@@ -274,9 +250,7 @@ def test_extract_and_persist_writes_accepted_beliefs(
     assert persisted.extractor_version == "v1.0.0-preference"
 
 
-def test_extract_and_persist_swallows_errors(
-    db_session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_extract_and_persist_swallows_errors(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
     """A broken extractor must never fail a successful agent run."""
     monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", True)
     monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
@@ -285,9 +259,7 @@ def test_extract_and_persist_swallows_errors(
     def _broken(**_: object) -> list[BeliefDraft]:
         raise RuntimeError("extractor imploded")
 
-    monkeypatch.setattr(
-        "app.core.memory.extractor.extract_beliefs", _broken
-    )
+    monkeypatch.setattr("app.core.memory.extractor.extract_beliefs", _broken)
     ids = _extract_and_persist_beliefs(
         db_session,
         prompt="p",
@@ -316,9 +288,7 @@ def test_run_agent_injects_retrieved_beliefs_and_records_formed(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "")
     monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", True)
     monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
-    monkeypatch.setattr(
-        "app.agent.agent_loop.settings.AGENT_WORKSPACE", str(tmp_path)
-    )
+    monkeypatch.setattr("app.agent.agent_loop.settings.AGENT_WORKSPACE", str(tmp_path))
     (tmp_path / "README.md").write_text("# Test\n", encoding="utf-8")
     _seed_agent_and_memory_policies(db_session)
     _reset_provider()
@@ -354,9 +324,7 @@ def test_run_agent_injects_retrieved_beliefs_and_records_formed(
     def _fake_extract(**_: object) -> list[BeliefDraft]:
         return new_drafts
 
-    monkeypatch.setattr(
-        "app.core.memory.extractor.extract_beliefs", _fake_extract
-    )
+    monkeypatch.setattr("app.core.memory.extractor.extract_beliefs", _fake_extract)
 
     out = run_agent(
         "Read README and summarize my preferences.",
@@ -398,9 +366,7 @@ def test_run_agent_memory_off_leaves_columns_null(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "")
     monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", False)
     monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", False)
-    monkeypatch.setattr(
-        "app.agent.agent_loop.settings.AGENT_WORKSPACE", str(tmp_path)
-    )
+    monkeypatch.setattr("app.agent.agent_loop.settings.AGENT_WORKSPACE", str(tmp_path))
     (tmp_path / "README.md").write_text("# Test\n", encoding="utf-8")
     _seed_agent_and_memory_policies(db_session)
     _reset_provider()
@@ -409,9 +375,7 @@ def test_run_agent_memory_off_leaves_columns_null(
     def _boom(**_: object) -> list[BeliefDraft]:
         raise AssertionError("extractor ran with MEMORY_ENABLED=False")
 
-    monkeypatch.setattr(
-        "app.core.memory.extractor.extract_beliefs", _boom
-    )
+    monkeypatch.setattr("app.core.memory.extractor.extract_beliefs", _boom)
 
     out = run_agent(
         "Read README.",
@@ -451,9 +415,7 @@ def test_resume_preserves_beliefs_used_audit_trail(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "")
     monkeypatch.setattr("app.agent.agent_loop.settings.MEMORY_ENABLED", True)
     monkeypatch.setattr("app.config.settings.MEMORY_ENABLED", True)
-    monkeypatch.setattr(
-        "app.agent.agent_loop.settings.AGENT_WORKSPACE", str(tmp_path)
-    )
+    monkeypatch.setattr("app.agent.agent_loop.settings.AGENT_WORKSPACE", str(tmp_path))
     _seed_agent_and_memory_policies(db_session)
     _reset_provider()
 
@@ -462,9 +424,7 @@ def test_resume_preserves_beliefs_used_audit_trail(
     def _no_drafts(**_: object) -> list[BeliefDraft]:
         return []
 
-    monkeypatch.setattr(
-        "app.core.memory.extractor.extract_beliefs", _no_drafts
-    )
+    monkeypatch.setattr("app.core.memory.extractor.extract_beliefs", _no_drafts)
 
     trace_id = uuid.uuid4().hex
     session_id = uuid.uuid4().hex
@@ -519,17 +479,13 @@ def test_resume_preserves_beliefs_used_audit_trail(
     # to [] on the fresh resume AgentRunResult.
     trace = db_session.query(Trace).filter_by(id=trace_id).one()
     assert trace.beliefs_used == saved_beliefs, (
-        f"beliefs_used was clobbered on resume: "
-        f"expected {saved_beliefs}, got {trace.beliefs_used!r}"
+        f"beliefs_used was clobbered on resume: expected {saved_beliefs}, got {trace.beliefs_used!r}"
     )
 
     # The returned AgentRunResult must also reflect the beliefs used
     # so that _episode_persist records them on the Episode row.
     assert list(out.beliefs_used) == saved_beliefs, (
-        f"AgentRunResult.beliefs_used was not restored on resume: "
-        f"got {out.beliefs_used!r}"
+        f"AgentRunResult.beliefs_used was not restored on resume: got {out.beliefs_used!r}"
     )
     ep = db_session.query(Episode).filter_by(trace_id=trace_id).one()
-    assert ep.beliefs_used == saved_beliefs, (
-        f"Episode.beliefs_used lost on resume: got {ep.beliefs_used!r}"
-    )
+    assert ep.beliefs_used == saved_beliefs, f"Episode.beliefs_used lost on resume: got {ep.beliefs_used!r}"

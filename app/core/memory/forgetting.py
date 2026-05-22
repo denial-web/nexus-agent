@@ -68,10 +68,7 @@ def _parse_duration(spec: str) -> timedelta | None:
         return None
     m = _DURATION_RE.match(s)
     if not m:
-        raise ValueError(
-            f"Invalid duration spec: {spec!r} "
-            "(expected e.g. '180d', '4h', '30m', or 'inf')"
-        )
+        raise ValueError(f"Invalid duration spec: {spec!r} (expected e.g. '180d', '4h', '30m', or 'inf')")
     value, unit = float(m.group(1)), m.group(2)
     if value <= 0:
         raise ValueError(f"Duration must be positive: {spec!r}")
@@ -105,9 +102,7 @@ def parse_decay_profile(profile: str) -> dict[str, timedelta | None]:
 _FALLBACK_HALFLIFE = timedelta(hours=24)
 
 
-def _effective_halflife(
-    entity_type: str, profile: dict[str, timedelta | None]
-) -> timedelta | None:
+def _effective_halflife(entity_type: str, profile: dict[str, timedelta | None]) -> timedelta | None:
     """Resolve an entity type's half-life. `None` means never decay."""
     key = (entity_type or "").strip().lower()
     if key in profile:
@@ -165,11 +160,7 @@ def decay_belief(
     infinite half-life.
     """
     now = now or datetime.now(UTC)
-    profile = (
-        profile
-        if profile is not None
-        else parse_decay_profile(settings.MEMORY_DECAY_PROFILE)
-    )
+    profile = profile if profile is not None else parse_decay_profile(settings.MEMORY_DECAY_PROFILE)
 
     before = BetaConfidence(
         alpha=float(belief.confidence_alpha or 1.0),
@@ -177,15 +168,11 @@ def decay_belief(
     )
 
     if not settings.MEMORY_ENABLED:
-        return DecayOutcome(
-            belief_id=belief.id, before=before, after=before, ratio=1.0, skipped=True
-        )
+        return DecayOutcome(belief_id=belief.id, before=before, after=before, ratio=1.0, skipped=True)
 
     half_life = _effective_halflife(belief.entity_type or "", profile)
     if half_life is None:
-        return DecayOutcome(
-            belief_id=belief.id, before=before, after=before, ratio=1.0, skipped=True
-        )
+        return DecayOutcome(belief_id=belief.id, before=before, after=before, ratio=1.0, skipped=True)
 
     observed = belief.observed_at or now
     if observed.tzinfo is None:
@@ -200,9 +187,7 @@ def decay_belief(
     ratio = max(ratio, 1e-6)
 
     after = BetaConfidence(alpha=before.alpha * ratio, beta=before.beta * ratio)
-    return DecayOutcome(
-        belief_id=belief.id, before=before, after=after, ratio=ratio, skipped=False
-    )
+    return DecayOutcome(belief_id=belief.id, before=before, after=after, ratio=ratio, skipped=False)
 
 
 def effective_sample_size(
@@ -276,9 +261,7 @@ def run_forget_sweep(
     outcome without querying anything.
     """
     if not settings.MEMORY_ENABLED:
-        return ForgetSweepOutcome(
-            scanned=0, tombstoned=0, skipped_infinite=0, dry_run=dry_run
-        )
+        return ForgetSweepOutcome(scanned=0, tombstoned=0, skipped_infinite=0, dry_run=dry_run)
     if sample_size_floor < 0:
         raise ValueError("sample_size_floor must be non-negative")
 

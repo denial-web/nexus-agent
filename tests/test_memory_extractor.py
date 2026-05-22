@@ -89,9 +89,7 @@ class TestJsonParsing:
             '```json\n[{"entity":"user:a","predicate":"p","value":"v",'
             '"entity_type":"preference","confidence":0.7}]\n```',
         )
-        drafts = extract_beliefs(
-            user_message="something", assistant_response="something"
-        )
+        drafts = extract_beliefs(user_message="something", assistant_response="something")
         assert len(drafts) == 1
 
     def test_parses_json_with_surrounding_text(self, memory_on, monkeypatch):
@@ -100,9 +98,7 @@ class TestJsonParsing:
             'Here is the JSON: [{"entity":"u","predicate":"p","value":"v",'
             '"entity_type":"preference","confidence":0.6}] (done)',
         )
-        drafts = extract_beliefs(
-            user_message="q", assistant_response="a"
-        )
+        drafts = extract_beliefs(user_message="q", assistant_response="a")
         assert len(drafts) == 1
 
     def test_empty_array_returns_empty(self, memory_on, monkeypatch):
@@ -122,8 +118,7 @@ class TestValidation:
     def test_drops_invalid_entity_type(self, memory_on, monkeypatch):
         _stub_llm(
             monkeypatch,
-            '[{"entity":"u","predicate":"p","value":"v",'
-            '"entity_type":"not_real","confidence":0.7}]',
+            '[{"entity":"u","predicate":"p","value":"v","entity_type":"not_real","confidence":0.7}]',
         )
         assert extract_beliefs(user_message="x", assistant_response="y") == []
 
@@ -137,8 +132,7 @@ class TestValidation:
     def test_clamps_confidence_out_of_range(self, memory_on, monkeypatch):
         _stub_llm(
             monkeypatch,
-            '[{"entity":"u","predicate":"p","value":"v",'
-            '"entity_type":"preference","confidence":5.0}]',
+            '[{"entity":"u","predicate":"p","value":"v","entity_type":"preference","confidence":5.0}]',
         )
         drafts = extract_beliefs(user_message="x", assistant_response="y")
         assert len(drafts) == 1
@@ -146,8 +140,7 @@ class TestValidation:
 
     def test_cap_on_number_of_drafts(self, memory_on, monkeypatch):
         items = ",".join(
-            f'{{"entity":"u{i}","predicate":"p","value":"v",'
-            f'"entity_type":"preference","confidence":0.7}}'
+            f'{{"entity":"u{i}","predicate":"p","value":"v","entity_type":"preference","confidence":0.7}}'
             for i in range(20)
         )
         _stub_llm(monkeypatch, f"[{items}]")
@@ -187,9 +180,7 @@ class TestLLMInvocation:
 
 
 class TestKeywords:
-    def test_keywords_include_predicate_and_value_tokens(
-        self, memory_on, monkeypatch
-    ):
+    def test_keywords_include_predicate_and_value_tokens(self, memory_on, monkeypatch):
         _stub_llm(
             monkeypatch,
             '[{"entity":"user:alice","predicate":"answer_length",'

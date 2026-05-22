@@ -28,6 +28,7 @@ from app.core.immune.scanner import Verdict, harden_prompt, scan_input, scan_out
 from app.core.llm.provider import _resolve_route, generate
 from app.core.training.labeler import push_failure
 from app.metrics import record_critic_scores
+from app.services.approval import approval_token_scope, validate_resume_approval
 
 logger = logging.getLogger(__name__)
 
@@ -186,10 +187,7 @@ def _retrieve_beliefs(
             used_ids.append(b.id)
             confidence = b.confidence()
             value_preview = str(b.value)[:120]
-            lines.append(
-                f"- [{b.entity_type}, conf={confidence:.2f}] "
-                f"{b.entity} {b.predicate} = {value_preview}"
-            )
+            lines.append(f"- [{b.entity_type}, conf={confidence:.2f}] {b.entity} {b.predicate} = {value_preview}")
         return "\n".join(lines), used_ids
     except Exception:
         logger.debug("Belief retrieval failed", exc_info=True)
@@ -236,11 +234,7 @@ def _extract_and_persist_beliefs(
             source_trace_id=trace_id,
             extractor_version=EXTRACTOR_VERSION,
         )
-        formed_ids = [
-            o.belief_id
-            for o in outcomes
-            if o.belief_id and o.status in ("accepted", "superseded")
-        ]
+        formed_ids = [o.belief_id for o in outcomes if o.belief_id and o.status in ("accepted", "superseded")]
         if formed_ids:
             db.commit()
         return formed_ids
@@ -577,16 +571,31 @@ def run_agent(
         # trail and must survive the pause/resume cycle. Restore them
         # onto the fresh AgentRunResult so _update_trace_final and
         # _episode_persist don't overwrite the saved list with NULL.
+        paused_status = None
         if db_session:
             from app.models.trace import Trace as _PausedTrace
 
             paused = db_session.query(_PausedTrace).filter_by(id=trace_id).first()
             if paused:
+                paused_status = paused.status
                 if paused.beliefs_used:
                     result.beliefs_used = list(paused.beliefs_used)
                 if paused.beliefs_formed:
                     result.beliefs_formed = list(paused.beliefs_formed)
         pending = resume_state.get("pending_tool")
+        needs_validation = bool(pending) or (
+            bool(resume_state.get("pending_final")) and paused_status == "pending_agent_resume"
+        )
+        ok, validation_error = (
+            validate_resume_approval(db_session, trace_id, resume_state)
+            if db_session and needs_validation
+            else (True, None)
+        )
+        if not ok:
+            result.status = "blocked"
+            result.error = validation_error or "Resume approval validation failed"
+            result.latency_ms = _elapsed(start)
+            return result
         if pending:
             tool_name = str(pending["tool"])
             args = pending.get("arguments") or {}
@@ -668,10 +677,7 @@ def run_agent(
     if episode_context:
         system += f"\n\nPast experience (use to guide your plan):\n{episode_context}"
     if belief_context:
-        system += (
-            "\n\nKnown beliefs about the user (high-confidence, current):\n"
-            f"{belief_context}"
-        )
+        system += f"\n\nKnown beliefs about the user (high-confidence, current):\n{belief_context}"
 
     if db_session and not resume_state:
         from app.models.trace import Trace
@@ -1060,7 +1066,7 @@ def _create_approval(
         required_approvals=str(required),
         received_approvals="0",
         status="pending",
-        token_scope={"trace_id": trace_id, "action": action_type},
+        token_scope=approval_token_scope(trace_id, action_type, payload),
         expires_at=datetime.now(UTC) + timedelta(hours=24),
     )
     db.add(approval)

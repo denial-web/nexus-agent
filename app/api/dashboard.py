@@ -84,6 +84,7 @@ def login_submit(request: Request, api_key: str = Form(...)) -> Response:
     valid, _is_primary = check_api_key(api_key)
     if valid:
         request.session["dashboard_authed"] = True
+        request.session["dashboard_reviewer_id"] = "dashboard:" + hashlib.sha256(api_key.encode()).hexdigest()[:16]
         return RedirectResponse(url="/dashboard", status_code=303)
     return templates.TemplateResponse(request, "login.html", {"error": "Invalid API key"}, status_code=403)
 
@@ -218,11 +219,19 @@ def cast_vote(
     if not _csrf_valid(request, csrf_token):
         return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
 
-    from app.services.approval import process_vote
+    from app.services.approval import process_vote, resolve_approver_identity
+
+    approver_identity, identity_error = resolve_approver_identity(request, approver_id)
+    if identity_error or not approver_identity:
+        safe_error = html_mod.escape(identity_error or "Invalid approver identity")
+        return HTMLResponse(
+            f'<h1>Vote failed</h1><p>{safe_error}</p><p><a href="/dashboard/approvals">Back to approvals</a></p>',
+            status_code=403,
+        )
 
     result = process_vote(
         request_id=request_id,
-        approver_id=approver_id,
+        approver_id=approver_identity,
         decision=decision,
         db=db,
     )
@@ -532,12 +541,7 @@ def memory_overview(request: Request, db: Session = Depends(get_db)) -> Response
         )
 
     stats = _memory_stats(db)
-    beliefs = (
-        db.query(Belief)
-        .order_by(Belief.observed_at.desc())
-        .limit(50)
-        .all()
-    )
+    beliefs = db.query(Belief).order_by(Belief.observed_at.desc()).limit(50).all()
     return templates.TemplateResponse(
         request,
         "memory.html",
@@ -560,11 +564,15 @@ def memory_integrity_page(request: Request, db: Session = Depends(get_db)) -> Re
     re-renders this template with a populated `result`.
     """
     csrf_token = _issue_csrf(request)
-    stats = _memory_stats(db) if settings.MEMORY_ENABLED else {
-        "total_live": 0,
-        "total_tombstoned": 0,
-        "distinct_chains": 0,
-    }
+    stats = (
+        _memory_stats(db)
+        if settings.MEMORY_ENABLED
+        else {
+            "total_live": 0,
+            "total_tombstoned": 0,
+            "distinct_chains": 0,
+        }
+    )
     return templates.TemplateResponse(
         request,
         "memory_integrity.html",
@@ -618,11 +626,15 @@ def memory_integrity_verify(
         return HTMLResponse("<h1>CSRF validation failed</h1>", status_code=403)
 
     csrf_new = _issue_csrf(request)
-    stats = _memory_stats(db) if settings.MEMORY_ENABLED else {
-        "total_live": 0,
-        "total_tombstoned": 0,
-        "distinct_chains": 0,
-    }
+    stats = (
+        _memory_stats(db)
+        if settings.MEMORY_ENABLED
+        else {
+            "total_live": 0,
+            "total_tombstoned": 0,
+            "distinct_chains": 0,
+        }
+    )
 
     if not settings.MEMORY_ENABLED:
         return templates.TemplateResponse(

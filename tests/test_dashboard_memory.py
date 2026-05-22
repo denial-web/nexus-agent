@@ -17,7 +17,6 @@ from __future__ import annotations
 import re
 
 import pytest
-
 from app.config import settings
 from app.core.memory.confidence import from_mean_and_strength
 from app.core.memory.skepticism import BeliefDraft
@@ -126,9 +125,7 @@ class TestMemoryOverviewPage:
 
 
 class TestIntegrityPageGet:
-    def test_initial_get_shows_form_without_running_verifier(
-        self, client, db_session, memory_on
-    ):
+    def test_initial_get_shows_form_without_running_verifier(self, client, db_session, memory_on):
         """The landing GET must NOT auto-verify — operators should
         trigger audits explicitly. If verification ran on GET the
         page would be a heavy side-effect and would spam the audit log."""
@@ -257,9 +254,7 @@ class TestIntegrityVerifyGovernance:
         remove the integrity-read allow rule so the default-deny
         verdict fires.
         """
-        db_session.query(Policy).filter(
-            Policy.name == "memory-allow-integrity-read"
-        ).delete()
+        db_session.query(Policy).filter(Policy.name == "memory-allow-integrity-read").delete()
         db_session.commit()
 
         _write_pref(db_session, user="victim", value="v")
@@ -289,9 +284,7 @@ class TestIntegrityVerifyCSRF:
         assert r.status_code == 403
         assert "CSRF" in r.text
 
-    def test_post_accepted_with_valid_token(
-        self, client, db_session, memory_on, csrf_enabled
-    ):
+    def test_post_accepted_with_valid_token(self, client, db_session, memory_on, csrf_enabled):
         _seed(db_session)
         _write_pref(db_session, user="csrf-user", value="v")
 

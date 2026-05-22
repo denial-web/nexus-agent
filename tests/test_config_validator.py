@@ -27,6 +27,7 @@ def _make_settings(**overrides: object) -> Settings:
         "REQUEST_TIMEOUT_SECONDS": 120.0,
         "SHUTDOWN_DRAIN_SECONDS": 30.0,
         "APPROVAL_QUORUM": 2,
+        "APPROVAL_REVIEWERS": "",
         "CB_FAILURE_THRESHOLD": 5,
         "AGENT_MAX_STEPS": 15,
         "GEMINI_API_KEY": "",
@@ -76,13 +77,40 @@ class TestSecurityChecks:
     def test_prod_both_missing(self):
         s = _make_settings(ENVIRONMENT="production", NEXUS_API_KEY="", SESSION_SECRET="")
         errors = _errors(validate(s))
-        assert len(errors) >= 2
+        assert len(errors) >= 3
 
     def test_prod_all_set_no_security_errors(self):
-        s = _make_settings(ENVIRONMENT="production", NEXUS_API_KEY="key", SESSION_SECRET="secret")
+        s = _make_settings(
+            ENVIRONMENT="production",
+            NEXUS_API_KEY="key",
+            SESSION_SECRET="secret",
+            APPROVAL_REVIEWERS="alice,bob",
+        )
         errors = _errors(validate(s))
-        security_errors = [e for e in errors if "NEXUS_API_KEY" in e or "SESSION_SECRET" in e]
+        security_errors = [
+            e for e in errors if "NEXUS_API_KEY" in e or "SESSION_SECRET" in e or "APPROVAL_REVIEWERS" in e
+        ]
         assert not security_errors
+
+    def test_prod_missing_approval_reviewers(self):
+        s = _make_settings(
+            ENVIRONMENT="production",
+            NEXUS_API_KEY="key",
+            SESSION_SECRET="secret",
+            APPROVAL_REVIEWERS="",
+        )
+        errors = _errors(validate(s))
+        assert any("APPROVAL_REVIEWERS" in e for e in errors)
+
+    def test_beta_missing_approval_reviewers(self):
+        s = _make_settings(
+            ENVIRONMENT="beta",
+            NEXUS_API_KEY="key",
+            SESSION_SECRET="secret",
+            APPROVAL_REVIEWERS="",
+        )
+        errors = _errors(validate(s))
+        assert any("APPROVAL_REVIEWERS" in e for e in errors)
 
 
 class TestContradictions:
@@ -224,6 +252,7 @@ class TestDatabase:
             DATABASE_URL="sqlite:///./nexus.db",
             NEXUS_API_KEY="key",
             SESSION_SECRET="secret",
+            APPROVAL_REVIEWERS="alice",
         )
         warnings = _warnings(validate(s))
         assert any("SQLite" in w for w in warnings)
@@ -234,6 +263,7 @@ class TestDatabase:
             DATABASE_URL="postgresql://u:p@host/db",
             NEXUS_API_KEY="key",
             SESSION_SECRET="secret",
+            APPROVAL_REVIEWERS="alice",
         )
         warnings = _warnings(validate(s))
         assert not any("SQLite" in w for w in warnings)

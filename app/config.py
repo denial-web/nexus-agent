@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     # Covernor governance
     APPROVAL_QUORUM: int = 2
     ECDSA_PRIVATE_KEY_PATH: str = ""
+    APPROVAL_REVIEWERS: str = ""  # comma-separated reviewer ids allowed to vote when configured
 
     # A-S-FLC defaults
     ASFLC_UNCERTAINTY_DELTA: float = 0.15

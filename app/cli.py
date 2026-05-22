@@ -331,7 +331,11 @@ def _extract_api_error(exc: httpx.HTTPStatusError) -> str:
         code = err.get("code", "error")
         msg = err.get("message", "")
         return f"{code}: {msg}".rstrip(": ")
-    return body.get("detail") if isinstance(body, dict) else str(exc)
+    if isinstance(body, dict):
+        detail = body.get("detail")
+        if detail:
+            return str(detail)
+    return str(exc)
 
 
 def _memory_get(path: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:

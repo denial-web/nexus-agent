@@ -12,6 +12,11 @@ All notable changes to Nexus Agent are documented here.
 - Community files: CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
 - GitHub issue/PR templates
 - Example scripts for quick demonstration
+- ClawGuard beta7 compatibility hardening: canonical `/v1/agent/run` coverage, safer default tool policies, approval action-hash binding, reviewer identity validation, and tampered-resume rejection.
+
+### Changed
+- Agent `file_write` and general `shell_exec` seeded policies now require approval by default; destructive shell patterns remain high-risk approval or deny paths.
+- Beta/production startup now requires `APPROVAL_REVIEWERS` so approval votes are constrained to configured reviewer identities.
 
 ## [0.1.0] - 2025-06-01
 

@@ -103,12 +103,12 @@ def compute_belief_hash(row: Belief) -> str:
         observed = observed.replace(tzinfo=UTC)
     payload = "|".join(
         [
-            row.id,
+            row.id or "",
             row.prev_hash or "",
-            row.entity,
-            row.predicate,
+            row.entity or "",
+            row.predicate or "",
             value_json,
-            row.source_type,
+            row.source_type or "",
             row.source_trace_id or "",
             observed.isoformat(),
         ]
@@ -154,10 +154,7 @@ def _verify_single_chain(
                 False,
                 checked,
                 row.id,
-                (
-                    f"prev_hash mismatch at belief_id={row.id}: "
-                    f"expected={expected_prev!r} got={row.prev_hash!r}"
-                ),
+                (f"prev_hash mismatch at belief_id={row.id}: expected={expected_prev!r} got={row.prev_hash!r}"),
             )
         if row.belief_hash != compute_belief_hash(row):
             return (

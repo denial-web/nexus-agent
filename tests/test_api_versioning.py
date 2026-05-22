@@ -63,6 +63,13 @@ class TestVersionHeader:
         resp = client.post("/v1/agent/run", json={"prompt": "hello"})
         assert resp.headers.get("X-API-Version") == API_VERSION
 
+    def test_agent_run_available_on_v1_and_legacy(self, client, monkeypatch):
+        monkeypatch.setattr("app.config.settings.RATE_LIMIT_RPM", 0)
+        for path in ("/v1/agent/run", "/api/agent/run"):
+            resp = client.post(path, json={"prompt": "hello"})
+            assert resp.status_code == 200
+            assert "trace_id" in resp.json()
+
     def test_dashboard_has_version_header(self, client):
         resp = client.get("/dashboard")
         assert resp.headers.get("X-API-Version") == API_VERSION

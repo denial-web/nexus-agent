@@ -135,9 +135,7 @@ class TestHashChain:
 
 
 class TestSupersession:
-    def test_contradicting_stronger_belief_supersedes(
-        self, memory_enabled, seeded_session
-    ):
+    def test_contradicting_stronger_belief_supersedes(self, memory_enabled, seeded_session):
         # Weak prior (mean 0.5 @ user_stated → effective 0.5 = threshold for
         # preference). New belief must beat that by at least stakes/2 = 0.25.
         first = write_belief(_pref_draft(value="short", alpha=2.0, beta=2.0), seeded_session)
@@ -172,9 +170,7 @@ class TestSupersession:
 
 
 class TestProvenance:
-    def test_records_source_trace_and_extractor_version(
-        self, memory_enabled, seeded_session
-    ):
+    def test_records_source_trace_and_extractor_version(self, memory_enabled, seeded_session):
         out = write_belief(
             _pref_draft(),
             seeded_session,
@@ -189,9 +185,7 @@ class TestProvenance:
 
 
 class TestBatch:
-    def test_write_beliefs_returns_outcome_per_draft(
-        self, memory_enabled, seeded_session
-    ):
+    def test_write_beliefs_returns_outcome_per_draft(self, memory_enabled, seeded_session):
         drafts = [
             _pref_draft(value="a", alpha=9.0, beta=1.0),
             _pref_draft(value="a", alpha=2.0, beta=2.0),  # will need_evidence vs identical prior
@@ -204,9 +198,7 @@ class TestBatch:
 
 
 class TestWriteOutcomeShape:
-    def test_outcome_dataclass_exposes_diagnostics(
-        self, memory_enabled, seeded_session
-    ):
+    def test_outcome_dataclass_exposes_diagnostics(self, memory_enabled, seeded_session):
         out = write_belief(_pref_draft(), seeded_session)
         assert isinstance(out, WriteOutcome)
         assert out.status == "accepted"
