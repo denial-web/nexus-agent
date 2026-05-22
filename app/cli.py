@@ -80,7 +80,17 @@ def cmd_feedback(args: argparse.Namespace) -> int:
 
 def cmd_approve(args: argparse.Namespace) -> int:
     url = f"{_base_url()}/v1/governance/approve/{args.request_id}"
-    body: dict[str, Any] = {"approver_id": args.approver or "cli-user", "decision": "approve"}
+    approver = (args.approver or os.environ.get("NEXUS_APPROVER_ID", "")).strip()
+    if not approver:
+        print(
+            "Approver reviewer ID required. Pass --approver <id> or set NEXUS_APPROVER_ID. "
+            "In beta/prod this ID must be listed in APPROVAL_REVIEWERS; voter identity is "
+            "derived from NEXUS_API_KEY or the dashboard session.",
+            file=sys.stderr,
+        )
+        return 2
+
+    body: dict[str, Any] = {"approver_id": approver, "decision": "approve"}
     try:
         r = httpx.post(url, json=body, headers=_headers(), timeout=60.0)
         r.raise_for_status()
@@ -580,7 +590,14 @@ def main() -> None:
 
     p_ap = sub.add_parser("approve", help="Approve a pending action")
     p_ap.add_argument("request_id")
-    p_ap.add_argument("--approver", default=None, help="Approver ID (default: cli-user)")
+    p_ap.add_argument(
+        "--approver",
+        default=None,
+        help=(
+            "Reviewer ID to request for this vote. Required unless NEXUS_APPROVER_ID is set; "
+            "must be listed in APPROVAL_REVIEWERS when configured."
+        ),
+    )
     p_ap.set_defaults(fn=cmd_approve)
 
     p_rs = sub.add_parser("resume", help="Resume agent after approval")
