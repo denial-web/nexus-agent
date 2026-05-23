@@ -80,14 +80,19 @@ docker compose --profile prod exec -T postgres \
   > "$BACKUP_DIR/nexus_db_${TIMESTAMP}.dump"
 
 # Verify the file is not empty and Postgres-readable
+docker compose --profile prod cp "$BACKUP_DIR/nexus_db_${TIMESTAMP}.dump" \
+  postgres:/tmp/nexus_verify.dump
 docker compose --profile prod exec -T postgres \
-  pg_restore --list /dev/stdin < "$BACKUP_DIR/nexus_db_${TIMESTAMP}.dump" \
-  | head -5
+  pg_restore --list /tmp/nexus_verify.dump | head -8
+docker compose --profile prod exec -T postgres rm -f /tmp/nexus_verify.dump
 ```
 
-Expected output: header lines starting with `;`, then a table-of-contents
-listing. If `pg_restore` errors, **do not retain the backup** — the dump
-is corrupted.
+Expected output: header lines starting with `;` (`Archive created at …`,
+`Format: CUSTOM`), then a table-of-contents listing. If `pg_restore`
+errors with *did not find magic string*, the dump is corrupt or was
+verified via stdin (Alpine `pg_restore` does not reliably read custom
+format from `/dev/stdin` through `docker exec -T`). **Do not retain the
+backup** if verification fails.
 
 ### Schedule (cron, host machine)
 
@@ -250,10 +255,12 @@ docker compose --profile prod exec -T postgres \
 docker compose --profile prod exec -T postgres \
   psql -U nexus -d postgres -c "CREATE DATABASE nexus_db OWNER nexus;"
 
-# 3. Restore from the dump
-cat /var/backups/nexus/nexus_db_20260523T030000Z.dump | \
-  docker compose --profile prod exec -T postgres \
-  pg_restore -U nexus -d nexus_db --no-owner --no-acl
+# 3. Restore from the dump (copy into the container first — same stdin caveat as §3)
+docker compose --profile prod cp /var/backups/nexus/nexus_db_20260523T030000Z.dump \
+  postgres:/tmp/nexus_restore.dump
+docker compose --profile prod exec -T postgres \
+  pg_restore -U nexus -d nexus_db --no-owner --no-acl /tmp/nexus_restore.dump
+docker compose --profile prod exec -T postgres rm -f /tmp/nexus_restore.dump
 
 # 4. Run any pending Alembic migrations (the backup may predate a deploy)
 docker compose --profile prod run --rm nexus-prod \
@@ -338,8 +345,9 @@ curl -fsS -H "X-API-Key: $NEXUS_API_KEY" \
   http://localhost:9000/v1/traces/session/<session_id>/verify-chain
 ```
 
-Expected: `{"ok": true, "chain_length": N}`. If `ok: false`, the restored
-database is corrupted — restore from an older backup.
+Expected: `{"valid": true, "problems": []}`. If `valid: false`, inspect
+`problems` — the restored database may be corrupted; restore from an
+older backup.
 
 ### 9.3 Memory subsystem (if `MEMORY_ENABLED=true`)
 
@@ -419,6 +427,21 @@ Equivalent options:
   gone, time the recovery on a fresh VM.
 
 Untested backups are not backups.
+
+### Dry-run validation (2026-05-23)
+
+On a live `docker compose --profile prod` stack (Postgres 16, port 9001):
+
+| Step | Result |
+|---|---|
+| `pg_dump` → 35 KB custom-format dump | Pass |
+| `pg_restore --list` via `docker compose cp` into container | Pass (stdin via `exec -T` fails — documented above) |
+| Sidecar restore to `nexus_db_drill` | Pass — trace count matched prod (3 = 3) |
+| `/health`, `/health/ready` | Pass |
+| `/v1/traces/session/{id}/verify-chain` | Pass — `valid: true` |
+
+Full destructive restore (§7 stop app → drop `nexus_db` → restore) was **not**
+run against the live stack; use a disposable staging host for that drill.
 
 ---
 
