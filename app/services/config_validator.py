@@ -76,8 +76,7 @@ def _check_security(settings: Settings, is_prod: bool, issues: list[ConfigIssue]
         issues.append(
             ConfigIssue(
                 "error",
-                f"ECDSA_PRIVATE_KEY_PATH='{ecdsa_path}' does not exist. "
-                "Provide a persistent EC private key PEM file.",
+                f"ECDSA_PRIVATE_KEY_PATH='{ecdsa_path}' does not exist. Provide a persistent EC private key PEM file.",
             )
         )
 
