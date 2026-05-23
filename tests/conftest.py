@@ -16,6 +16,9 @@ os.environ["GEMINI_API_KEY"] = ""
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["DEEPSEEK_API_KEY"] = ""
 os.environ["EXPOSE_METRICS"] = "true"
+# Isolate tests from operator shell exports (e.g. beta-deploy smoke).
+os.environ["APPROVAL_REVIEWERS"] = ""
+os.environ["APPROVAL_QUORUM"] = "2"
 
 from app.db import Base  # noqa: E402
 from app.main import app  # noqa: E402
