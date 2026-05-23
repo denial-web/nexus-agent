@@ -56,7 +56,7 @@ Nexus has unusually strong security engineering for an OSS agent runtime (defaul
 |---|---|
 | **No external security audit** | Claims are self-verified via test suite only |
 | **Rate limiter fail-open on Redis reconnect** | Brief window where limits are not enforced |
-| **No backup / DR runbook** | Beyond basic Docker rollback in beta runbook §8 |
+| ~~No backup / DR runbook~~ | Doc-shipped — see [backup_dr_runbook.md](backup_dr_runbook.md) |
 | **MCP `require_approval` unsupported (v1)** | Returns JSON-RPC `-32001`; allow/deny only |
 
 ### P2 — Product maturity / positioning
@@ -156,16 +156,18 @@ Before increasing `GUNICORN_WORKERS`:
 
 1. ~~Persist capability tokens (Redis) + ECDSA config-validator warning~~ — **done**
 2. ~~Redact `pending_tool` arguments in public API payloads~~ — **done**
-3. **Hosted deploy runbook** with TLS termination template — see [beta_deploy_runbook.md](beta_deploy_runbook.md) §10
-4. **Structured pen test** or third-party audit; publish summary
-5. **MCP `require_approval`** support (or document permanent allow/deny-only scope)
-6. **Backup / restore** procedure for Postgres trace + policy tables
+3. ~~Hosted deploy runbook with TLS template~~ — see [beta_deploy_runbook.md](beta_deploy_runbook.md) §10
+4. ~~Backup / restore procedure for Postgres~~ — see [backup_dr_runbook.md](backup_dr_runbook.md)
+5. **Structured pen test** or third-party audit; publish summary
+6. **MCP `require_approval`** support (or document permanent allow/deny-only scope)
+7. **Streaming replication / HA** for multi-node deploy (v0.3)
 
 ---
 
 ## See also
 
 - [beta_deploy_runbook.md](beta_deploy_runbook.md) — first prod boot and approval smoke
+- [backup_dr_runbook.md](backup_dr_runbook.md) — Postgres backups, PITR, restore verification
 - [fame_playbook.md](fame_playbook.md) — launch-day operations
 - [benchmarks.md](benchmarks.md) — nightly exit-gated eval receipts
 - [SECURITY.md](../SECURITY.md) — vulnerability reporting
