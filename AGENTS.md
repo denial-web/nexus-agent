@@ -175,10 +175,17 @@ docker compose up -d
 
 ### Docker — Postgres + Redis (production)
 ```bash
-cp .env.example .env          # set NEXUS_API_KEY, SESSION_SECRET, API keys
-docker compose --profile prod up -d
-# → Postgres 16, Redis 7, gunicorn + 2 uvicorn workers
+cp .env.example .env          # set NEXUS_API_KEY, SESSION_SECRET, APPROVAL_REVIEWERS, POSTGRES_PASSWORD, API keys
+GUNICORN_WORKERS=1 docker compose --profile prod up -d postgres redis nexus-prod
+# → First boot: Postgres 16, Redis 7, Nexus with one app worker
 ```
+
+Use explicit prod services (`postgres redis nexus-prod`), not bare
+`docker compose --profile prod up -d`, because the bare profile also starts
+the default SQLite `nexus` service and can conflict on `NEXUS_PORT`. Use
+`GUNICORN_WORKERS=1` for the first boot on a fresh Postgres database so
+multiple gunicorn workers do not race Alembic migration setup; after `/health`
+is green, restart with the normal worker count.
 
 To run tests against PostgreSQL:
 ```bash
@@ -221,7 +228,7 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 
 ## Operational Notes
 
-- **Docker deployment**: Multi-stage Dockerfile (builder + runtime) with `gunicorn` + `uvicorn` workers. Default: 2 workers, configurable via `GUNICORN_WORKERS`. `docker-compose.yml` provides two profiles: default (SQLite, single service) and `prod` (Postgres 16 + Redis 7 + Nexus with resource limits). Gunicorn's `--graceful-timeout` is wired to `SHUTDOWN_DRAIN_SECONDS` for coordinated shutdown. Container health check uses `curl` against `/health`.
+- **Docker deployment**: Multi-stage Dockerfile (builder + runtime) with `gunicorn` + `uvicorn` workers. Default: 2 workers, configurable via `GUNICORN_WORKERS`. `docker-compose.yml` provides default SQLite service `nexus` and prod services (`postgres`, `redis`, `nexus-prod`). For prod, start explicit services (`docker compose --profile prod up -d postgres redis nexus-prod`) so the default SQLite service does not also bind `NEXUS_PORT`. On first boot against an empty Postgres database, set `GUNICORN_WORKERS=1` to avoid concurrent Alembic migration setup, then restart with the normal worker count after `/health` is green. Gunicorn's `--graceful-timeout` is wired to `SHUTDOWN_DRAIN_SECONDS` for coordinated shutdown. Container health check uses `curl` against `/health`.
 - **Persist failure**: If the DB commit fails after LLM generation, the client gets a 500 and no trace is recorded. Monitor logs for `"Failed to persist trace"` — repeated occurrences indicate database connectivity or disk-space issues.
 - **Rate limiting**: Applied to all expensive POST endpoints (`/api/agent/run`, `/api/agent/stream`, `/api/agent/compare`, `/api/training/lora/compare`, `/api/training/export`, `/dashboard/login`, etc.). Configurable via `RATE_LIMIT_RPM`. Backend: Redis sliding-window log (sorted set + Lua script, `ZRANGEBYSCORE` + `ZADD` + `EXPIRE`) when `REDIS_URL` is set (multi-worker safe, true sliding window — no fixed-window boundary burst), otherwise in-process memory. Auto-fallback: if Redis is unreachable at startup, falls back to in-process. Automatic reconnection: on runtime Redis failures, the backend attempts reconnect with a 5-second cooldown; fail-open during reconnect (requests allowed). Both backends return `RateLimitResult` with `remaining` count and `retry_after` seconds. Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining` headers; 429 responses additionally include `X-RateLimit-Reset` and `Retry-After`. Backend status visible in `GET /health/ready`.
 - **Request body size limit**: `BodySizeLimitMiddleware` rejects requests exceeding `MAX_REQUEST_BODY_BYTES` (default 10 MB, 0 = disabled) with a structured 413 error before the body is parsed. Checks the `Content-Length` header for early rejection, preventing memory exhaustion from oversized payloads. Complements the per-prompt `MAX_PROMPT_LENGTH` check as defense-in-depth.

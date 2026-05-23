@@ -681,22 +681,43 @@ make docker-up
 
 ### Docker (PostgreSQL + Redis)
 
+Set the production-only variables before booting the prod profile:
+
 ```bash
-docker compose --profile prod up --build -d
+cp .env.example .env
+# Fill in at minimum: NEXUS_API_KEY, SESSION_SECRET, APPROVAL_REVIEWERS, POSTGRES_PASSWORD.
 ```
 
-Starts Postgres 16, Redis 7, and Nexus with gunicorn + 2 uvicorn workers under resource limits.
+Start the explicit prod services, not the whole profile:
+
+```bash
+docker compose --profile prod up --build -d postgres redis nexus-prod
+```
+
+This starts Postgres 16, Redis 7, and Nexus with gunicorn + uvicorn workers under resource limits.
+Do not run `docker compose --profile prod up -d` for first boot: Compose will also start the
+default SQLite `nexus` service, and both `nexus` and `nexus-prod` bind `NEXUS_PORT`.
+
+On a fresh Postgres database, run the first boot with one app worker so concurrent gunicorn
+workers cannot race Alembic's migration setup:
+
+```bash
+GUNICORN_WORKERS=1 docker compose --profile prod up --build -d postgres redis nexus-prod
+```
+
+After `/health` is green and migrations have run, restart with the normal worker count.
 
 ### Production Checklist
 
 1. **`ENVIRONMENT=production`** — enables JSON structured logging and startup checks
 2. **`NEXUS_API_KEY`** — required; app refuses to start without it in production
 3. **`SESSION_SECRET`** — required for dashboard session security
-4. **`ENFORCE_DASHBOARD_CSRF=true`** — CSRF protection for dashboard forms
-5. **PostgreSQL** — SQLite is for development only
-6. **Retention** — set `RETENTION_*_DAYS` to prevent unbounded data growth
-7. **Metrics** — set `EXPOSE_METRICS=true` and scrape `/metrics` with Prometheus
-8. **OTel** — set `OTEL_ENABLED=true` and `OTEL_EXPORTER_ENDPOINT` for distributed tracing
+4. **`APPROVAL_REVIEWERS`** — required in beta/production so approval votes are constrained
+5. **`ENFORCE_DASHBOARD_CSRF=true`** — CSRF protection for dashboard forms
+6. **PostgreSQL** — SQLite is for development only
+7. **Retention** — set `RETENTION_*_DAYS` to prevent unbounded data growth
+8. **Metrics** — set `EXPOSE_METRICS=true` and scrape `/metrics` with Prometheus
+9. **OTel** — set `OTEL_ENABLED=true` and `OTEL_EXPORTER_ENDPOINT` for distributed tracing
 
 ### Multi-Worker Deployment
 
