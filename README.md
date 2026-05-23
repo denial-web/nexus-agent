@@ -707,6 +707,9 @@ GUNICORN_WORKERS=1 docker compose --profile prod up --build -d postgres redis ne
 
 After `/health` is green and migrations have run, restart with the normal worker count.
 
+For the full beta/prod checklist, approval smoke test, and rollback steps, see
+[`docs/beta_deploy_runbook.md`](docs/beta_deploy_runbook.md).
+
 ### Production Checklist
 
 1. **`ENVIRONMENT=production`** — enables JSON structured logging and startup checks
