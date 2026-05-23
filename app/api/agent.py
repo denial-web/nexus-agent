@@ -21,6 +21,61 @@ _timeout_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pipeline-t
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
+_PENDING_APPROVAL_MESSAGE = "Response requires approval before delivery"
+
+
+def _public_response(status: str, response: str | None) -> str | None:
+    if status == "pending_approval":
+        return None
+    return response
+
+
+def _public_agent_payload(result: Any) -> dict:
+    payload = {
+        "trace_id": result.trace_id,
+        "session_id": result.session_id,
+        "status": result.status,
+        "response": _public_response(result.status, result.response),
+        "error": result.error,
+        "model_id": result.model_id_used,
+        "token_count": result.token_count,
+        "latency_ms": result.latency_ms,
+        "task_reward_score": result.task_reward_score,
+        "total_steps": result.total_steps,
+        "self_corrections": result.self_corrections,
+        "approval_request_id": result.approval_request_id,
+        "agent_state": result.agent_state,
+        "trajectory": result.trajectory,
+    }
+    if payload["response"] is None and result.status == "pending_approval" and not payload["error"]:
+        payload["error"] = _PENDING_APPROVAL_MESSAGE
+    return payload
+
+
+def _public_run_payload(result: Any) -> dict:
+    payload = {
+        "trace_id": result.trace_id,
+        "session_id": result.session_id,
+        "status": result.status,
+        "response": _public_response(result.status, result.response),
+        "model_id": result.model_id_used,
+        "token_count": result.token_count,
+        "pipeline": {
+            "immune_input": result.immune_input,
+            "asflc": result.asflc,
+            "critic": result.critic_result,
+            "governance": result.governance,
+            "immune_output": result.immune_output,
+        },
+        "latency_ms": result.latency_ms,
+        "error": result.error,
+    }
+    if result.approval_request_id:
+        payload["approval_request_id"] = result.approval_request_id
+    if payload["response"] is None and result.status == "pending_approval" and not payload["error"]:
+        payload["error"] = _PENDING_APPROVAL_MESSAGE
+    return payload
+
 
 class RunRequest(BaseModel):
     prompt: str
@@ -133,25 +188,7 @@ def run_agent(req: RunRequest, db: Session = Depends(get_db)) -> dict:
             f"Pipeline did not complete within {timeout}s timeout",
         ) from None
 
-    payload = {
-        "trace_id": result.trace_id,
-        "session_id": result.session_id,
-        "status": result.status,
-        "response": result.response,
-        "model_id": result.model_id_used,
-        "token_count": result.token_count,
-        "pipeline": {
-            "immune_input": result.immune_input,
-            "asflc": result.asflc,
-            "critic": result.critic_result,
-            "governance": result.governance,
-            "immune_output": result.immune_output,
-        },
-        "latency_ms": result.latency_ms,
-        "error": result.error,
-    }
-    if result.approval_request_id:
-        payload["approval_request_id"] = result.approval_request_id
+    payload = _public_run_payload(result)
     return payload
 
 
@@ -188,22 +225,7 @@ def run_agentic(req: AgentRunRequest, db: Session = Depends(get_db)) -> dict:
             "request_timeout",
             f"Agent loop did not complete within {timeout}s timeout",
         ) from None
-    return {
-        "trace_id": r.trace_id,
-        "session_id": r.session_id,
-        "status": r.status,
-        "response": r.response,
-        "error": r.error,
-        "model_id": r.model_id_used,
-        "token_count": r.token_count,
-        "latency_ms": r.latency_ms,
-        "task_reward_score": r.task_reward_score,
-        "total_steps": r.total_steps,
-        "self_corrections": r.self_corrections,
-        "approval_request_id": r.approval_request_id,
-        "agent_state": r.agent_state,
-        "trajectory": r.trajectory,
-    }
+    return _public_agent_payload(r)
 
 
 @router.post("/agent/resume", response_model=AgentRunResponse)
@@ -236,22 +258,7 @@ def resume_agentic(req: AgentResumeRequest, db: Session = Depends(get_db)) -> di
     else:
         raise HTTPException(status_code=400, detail="Invalid agent_state")
 
-    return {
-        "trace_id": r.trace_id,
-        "session_id": r.session_id,
-        "status": r.status,
-        "response": r.response,
-        "error": r.error,
-        "model_id": r.model_id_used,
-        "token_count": r.token_count,
-        "latency_ms": r.latency_ms,
-        "task_reward_score": r.task_reward_score,
-        "total_steps": r.total_steps,
-        "self_corrections": r.self_corrections,
-        "approval_request_id": r.approval_request_id,
-        "agent_state": r.agent_state,
-        "trajectory": r.trajectory,
-    }
+    return _public_agent_payload(r)
 
 
 @router.post("/agent/feedback")
@@ -439,10 +446,34 @@ def compare_models(req: CompareRequest, db: Session = Depends(get_db)) -> dict:
         )
 
     viable = [c for c in candidates if not c["output_blocked"] and not c["halted"]]
-    if viable:
-        winner = max(viable, key=lambda c: float(c["aggregate_score"]))
-    else:
-        winner = max(candidates, key=lambda c: float(c["aggregate_score"]))
+    latency_ms = round((time.time() - start) * 1000, 1)
+
+    if not viable:
+        if not candidates:
+            final_status = "error"
+            error_msg = "No LLM providers returned a viable response"
+        elif all(c.get("output_blocked") for c in candidates):
+            final_status = "blocked"
+            error_msg = "All candidate responses blocked by output scan"
+        elif all(c.get("halted") for c in candidates):
+            final_status = "halted"
+            error_msg = "All candidate responses halted by critic evaluation"
+        else:
+            final_status = "halted"
+            error_msg = "No viable candidate responses"
+
+        PIPELINE_RUNS.labels(status=final_status).inc()
+        PIPELINE_LATENCY.labels(status=final_status).observe(latency_ms / 1000.0)
+        return {
+            "status": final_status,
+            "error": error_msg,
+            "candidates": candidates,
+            "winner": None,
+            "candidate_count": len(candidates),
+            "latency_ms": latency_ms,
+        }
+
+    winner = max(viable, key=lambda c: float(c["aggregate_score"]))
 
     from app.core.covernor.policy_engine import evaluate_action
 
@@ -452,8 +483,6 @@ def compare_models(req: CompareRequest, db: Session = Depends(get_db)) -> dict:
         "policy": gov_decision.policy_name,
         "risk_level": gov_decision.risk_level,
     }
-
-    latency_ms = round((time.time() - start) * 1000, 1)
 
     if gov_decision.decision == "deny":
         PIPELINE_RUNS.labels(status="blocked").inc()
@@ -473,14 +502,17 @@ def compare_models(req: CompareRequest, db: Session = Depends(get_db)) -> dict:
     PIPELINE_RUNS.labels(status=final_status).inc()
     PIPELINE_LATENCY.labels(status=final_status).observe(latency_ms / 1000.0)
 
+    winner_payload: dict[str, Any] = {
+        "model_id": winner["model_id"],
+        "provider": winner["provider"],
+        "aggregate_score": winner["aggregate_score"],
+    }
+    if final_status != "pending_approval":
+        winner_payload["response"] = winner["response"]
+
     return {
         "status": final_status,
-        "winner": {
-            "model_id": winner["model_id"],
-            "provider": winner["provider"],
-            "response": winner["response"],
-            "aggregate_score": winner["aggregate_score"],
-        },
+        "winner": winner_payload,
         "governance": governance,
         "candidates": candidates,
         "candidate_count": len(candidates),

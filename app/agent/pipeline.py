@@ -79,6 +79,17 @@ class PipelineResult:
     agent_trajectory: list | None = None
 
 
+_PENDING_APPROVAL_MESSAGE = "Response requires approval before delivery"
+
+
+def _withhold_pending_response(result: PipelineResult) -> None:
+    """Keep generated text in the trace for reviewers, but not in API payloads."""
+    if result.status == "pending_approval":
+        result.response = None
+        if not result.error:
+            result.error = _PENDING_APPROVAL_MESSAGE
+
+
 def invalidate_arbiter_cache() -> None:
     """Force the next get_arbiter() call to rebuild from the registry."""
     global _arbiter_cache, _arbiter_cache_time
@@ -372,6 +383,7 @@ def _run_inner(
             result.approval_request_id = approval.id
             result.governance["approval_request_id"] = approval.id
         _persist_trace(result, prompt, db_session)
+        _withhold_pending_response(result)
         _record_run(result)
         _fire_webhook(
             "approval_needed",
@@ -689,11 +701,12 @@ def run_stream(
             result.approval_request_id = approval.id
             result.governance["approval_request_id"] = approval.id
         _persist_trace(result, prompt, db_session)
+        _withhold_pending_response(result)
         _record_run(result)
         yield {
             "event": "error",
             "data": {
-                "error": "Response requires approval before delivery",
+                "error": result.error or _PENDING_APPROVAL_MESSAGE,
                 "status": "pending_approval",
                 "approval_request_id": result.approval_request_id,
             },

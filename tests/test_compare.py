@@ -310,11 +310,46 @@ class TestCompareEndpoint:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "completed"
+        assert data["status"] == "halted"
+        assert data["winner"] is None
         assert len(data["candidates"]) == 1
         assert data["candidates"][0]["critic_verdict"] == "error"
         assert data["candidates"][0]["halted"] is True
         assert data["candidates"][0]["aggregate_score"] == 0.0
+
+    @patch("app.core.llm.provider.generate")
+    def test_compare_no_winner_when_all_output_blocked(self, mock_gen, client):
+        from app.core.immune.scanner import ScanResult, Verdict
+
+        mock_gen.return_value = _mock_response("mock", "mock", "api_key=sk-live1234567890abcdef")
+        blocked = ScanResult(verdict=Verdict.BLOCK, score=1.0, triggers=["secret:api_key"])
+        with patch("app.core.immune.scanner.scan_output", return_value=blocked):
+            resp = client.post("/api/agent/compare", json={"prompt": "hello", "model_ids": ["mock"]})
+
+        data = resp.json()
+        assert data["status"] == "blocked"
+        assert data["winner"] is None
+        assert data["candidates"][0]["output_blocked"] is True
+
+    @patch("app.core.llm.provider.generate")
+    def test_compare_no_winner_when_all_halted(self, mock_gen, client):
+        from app.core.critic.arbiter import ArbiterResult
+
+        mock_gen.return_value = _mock_response("mock", "mock", "unsafe response text")
+        halt = ArbiterResult(
+            verdict="halt",
+            scores={"safety": {"score": 0.0, "verdict": "fail"}},
+            rollback_count=0,
+            halted_by="safety:threshold",
+            unc_inserted=False,
+        )
+        with patch("app.core.critic.arbiter.Arbiter.evaluate", return_value=halt):
+            resp = client.post("/api/agent/compare", json={"prompt": "hello", "model_ids": ["mock"]})
+
+        data = resp.json()
+        assert data["status"] == "halted"
+        assert data["winner"] is None
+        assert data["candidates"][0]["halted"] is True
 
 
 class TestCompareGovernance:
@@ -369,6 +404,8 @@ class TestCompareGovernance:
         data = resp.json()
         assert data["status"] == "pending_approval"
         assert data["winner"] is not None
+        assert data["winner"].get("response") is None
+        assert data["winner"]["model_id"]
         assert data["governance"]["decision"] == "require_approval"
 
 

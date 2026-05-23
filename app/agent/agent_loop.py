@@ -983,6 +983,10 @@ def run_agent(
         row = db_session.query(Trace).filter_by(id=trace_id).first()
         if row:
             _update_trace_final(db_session, trace_id, prompt, result, user_feedback)
+        if result.status == "pending_approval" and (result.agent_state or {}).get("pending_final"):
+            result.response = None
+            if not result.error:
+                result.error = "Response requires approval before delivery"
         if result.status in ("completed", "halted", "blocked"):
             result.task_reward_score = result.task_reward_score or compute_task_reward(
                 step_critic_avgs,

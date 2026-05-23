@@ -273,6 +273,14 @@ class TestPipeline:
             assert ar is not None
             assert ar.status == "pending"
             assert int(ar.required_approvals) >= 2
+            assert result.response is None
+            assert result.error
+
+            from app.models.trace import Trace
+
+            trace = db_session.query(Trace).filter_by(id=result.trace_id).first()
+            assert trace is not None
+            assert trace.response
         finally:
             db_session.delete(p)
             db_session.commit()
@@ -324,6 +332,35 @@ class TestPipelineAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "blocked"
+
+    def test_run_withholds_pending_approval_response(self, client, db_session):
+        from app.models.policy import Policy
+        from app.models.trace import Trace
+
+        policy = Policy(
+            name="api-withhold-approval",
+            action_pattern="respond",
+            resource_pattern="chat",
+            decision="require_approval",
+            risk_level="high",
+            required_approvals="1",
+            priority=1,
+        )
+        db_session.add(policy)
+        db_session.commit()
+        try:
+            resp = client.post("/api/agent/run", json={"prompt": "Needs approval before release"})
+            data = resp.json()
+            assert data["status"] == "pending_approval"
+            assert data.get("response") is None
+            assert data.get("approval_request_id")
+
+            trace = db_session.query(Trace).filter_by(id=data["trace_id"]).first()
+            assert trace is not None
+            assert trace.response
+        finally:
+            db_session.delete(policy)
+            db_session.commit()
 
     def test_empty_prompt_rejected(self, client):
         resp = client.post("/api/agent/run", json={"prompt": ""})
