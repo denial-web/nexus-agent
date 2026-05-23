@@ -5,6 +5,7 @@ from app.core.covernor.policy_engine import evaluate_action
 from app.core.covernor.token_manager import (
     get_public_key_pem,
     issue_token,
+    peek_token,
     reset_keys,
     verify_and_consume,
     verify_signature,
@@ -124,11 +125,16 @@ class TestTokenManager:
         assert "expired" in reason
 
     def test_tampered_payload_rejected(self):
-        from app.core.covernor import token_manager as tm
-
         token = issue_token(trace_id="t4", action_type="respond")
-        tok = tm._issued_tokens[token.token_id]
-        tok.trace_id = "tampered"
+        stored = peek_token(token.token_id)
+        assert stored is not None
+        stored.trace_id = "tampered"
+        from app.services.capability_token_store import StoredCapabilityToken, get_token_store
+
+        get_token_store().put(
+            StoredCapabilityToken(**stored.__dict__),
+            ttl_seconds=300,
+        )
 
         valid, reason = verify_and_consume(token.token_id)
         assert valid is False

@@ -63,6 +63,24 @@ def _check_security(settings: Settings, is_prod: bool, issues: list[ConfigIssue]
             )
         )
 
+    ecdsa_path = (settings.ECDSA_PRIVATE_KEY_PATH or "").strip()
+    if not ecdsa_path:
+        issues.append(
+            ConfigIssue(
+                "warning",
+                "ECDSA_PRIVATE_KEY_PATH unset in production. Capability tokens will use an "
+                "ephemeral signing key that changes on every restart.",
+            )
+        )
+    elif not os.path.isfile(ecdsa_path):
+        issues.append(
+            ConfigIssue(
+                "error",
+                f"ECDSA_PRIVATE_KEY_PATH='{ecdsa_path}' does not exist. "
+                "Provide a persistent EC private key PEM file.",
+            )
+        )
+
     if not settings.APPROVAL_REVIEWERS.strip():
         issues.append(
             ConfigIssue(
@@ -404,7 +422,8 @@ def _check_multi_worker(settings: Settings, issues: list[ConfigIssue]) -> None:
                 "warning",
                 f"Running {gunicorn_workers} workers but REDIS_URL is empty. "
                 "Idempotency key cache is per-worker (not shared). "
-                "Set REDIS_URL for cross-worker idempotency.",
+                "Capability tokens are per-worker (not shared). "
+                "Set REDIS_URL for cross-worker idempotency and capability tokens.",
             )
         )
 

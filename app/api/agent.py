@@ -30,6 +30,32 @@ def _public_response(status: str, response: str | None) -> str | None:
     return response
 
 
+def _public_agent_state(agent_state: dict | None, status: str) -> dict | None:
+    if agent_state is None:
+        return None
+    if status != "pending_approval":
+        return agent_state
+
+    sanitized = {k: v for k, v in agent_state.items() if k not in ("messages", "pending_tool")}
+    pending = agent_state.get("pending_tool")
+    if isinstance(pending, dict):
+        sanitized["pending_tool"] = {
+            "tool": pending.get("tool"),
+            "arguments_withheld": True,
+        }
+    if agent_state.get("messages"):
+        sanitized["messages_withheld"] = True
+    if agent_state.get("pending_final"):
+        sanitized["pending_final"] = True
+    return sanitized
+
+
+def _public_trajectory(trajectory: list | None, status: str) -> list | None:
+    if trajectory is None or status != "pending_approval":
+        return trajectory
+    return []
+
+
 def _public_agent_payload(result: Any) -> dict:
     payload = {
         "trace_id": result.trace_id,
@@ -44,8 +70,8 @@ def _public_agent_payload(result: Any) -> dict:
         "total_steps": result.total_steps,
         "self_corrections": result.self_corrections,
         "approval_request_id": result.approval_request_id,
-        "agent_state": result.agent_state,
-        "trajectory": result.trajectory,
+        "agent_state": _public_agent_state(result.agent_state, result.status),
+        "trajectory": _public_trajectory(result.trajectory, result.status),
     }
     if payload["response"] is None and result.status == "pending_approval" and not payload["error"]:
         payload["error"] = _PENDING_APPROVAL_MESSAGE

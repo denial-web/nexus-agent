@@ -194,9 +194,82 @@ Completed on `master` as of 2026-05-23:
 - Pending-approval response withholding on `/v1/agent/run` and agent endpoints.
 - `/v1/agent/compare` returns no winner when all candidates are halted or
   output-blocked.
+- Redis-backed capability token store — shared across gunicorn workers when
+  `REDIS_URL` is set.
+- Production config validator warnings for unset/missing `ECDSA_PRIVATE_KEY_PATH`.
+- Public agent API redaction of `pending_tool` arguments and messages during
+  `pending_approval`.
 
 Remaining before public launch (non-blocking for beta smoke):
 
-- Hosted deploy target confirmation (Fly/Railway/VPS) and TLS termination.
+- Hosted deploy target confirmation (Fly/Railway/VPS) — TLS template in §10 below.
 - Show HN / launch copy final review (drafts live in `~/nexus-launch-drafts/`).
 - Optional: redact halted/blocked candidate bodies in compare responses.
+
+## 10. TLS Termination (required for internet-facing prod)
+
+Nexus listens on plain HTTP inside the container (`9000`). Do **not** expose that
+port directly to the public internet. Terminate TLS at a reverse proxy.
+
+### Caddy (simplest)
+
+```caddy
+nexus.example.com {
+    reverse_proxy nexus-prod:9000
+}
+```
+
+### nginx
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name nexus.example.com;
+
+    ssl_certificate     /etc/ssl/certs/nexus.fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/nexus.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:9000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+}
+```
+
+After TLS is live, smoke through the public URL:
+
+```bash
+curl -fsS https://nexus.example.com/health
+curl -fsS -H "X-API-Key: $NEXUS_API_KEY" https://nexus.example.com/v1/governance/approvals
+```
+
+### Persistent ECDSA signing key
+
+Generate once and mount into every `nexus-prod` container:
+
+```bash
+openssl ecparam -genkey -name prime256v1 -noout -out ecdsa.pem
+chmod 600 ecdsa.pem
+```
+
+Set in `.env`:
+
+```bash
+ECDSA_PRIVATE_KEY_PATH=/secrets/ecdsa.pem
+```
+
+Mount the host file into the container (example compose override):
+
+```yaml
+services:
+  nexus-prod:
+    volumes:
+      - ./ecdsa.pem:/secrets/ecdsa.pem:ro
+```
+
+Startup warns in production when `ECDSA_PRIVATE_KEY_PATH` is unset; boot fails
+when the path is set but the file is missing.

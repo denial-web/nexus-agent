@@ -4,6 +4,9 @@ ECDSA capability token manager.
 Issues single-use, scope-bound tokens after governance approval.
 Each token cryptographically proves that a specific action was approved
 through the K-of-N process.
+
+Token metadata is persisted via ``capability_token_store`` (Redis when
+``REDIS_URL`` is set, otherwise in-process per worker).
 """
 
 import json
@@ -19,15 +22,17 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from app.config import settings
+from app.services.capability_token_store import (
+    StoredCapabilityToken,
+    get_token_store,
+    reset_token_store,
+)
 
 logger = logging.getLogger(__name__)
 
 _private_key: ec.EllipticCurvePrivateKey | None = None
 _public_key: ec.EllipticCurvePublicKey | None = None
 _key_lock = threading.Lock()
-
-_issued_tokens: dict[str, "CapabilityToken"] = {}
-_MAX_ISSUED_TOKENS = 10_000
 
 
 @dataclass
@@ -47,7 +52,15 @@ def reset_keys() -> None:
     global _private_key, _public_key
     _private_key = None
     _public_key = None
-    _issued_tokens.clear()
+    reset_token_store()
+
+
+def peek_token(token_id: str) -> CapabilityToken | None:
+    """Return a token without consuming it (tests only)."""
+    stored = get_token_store().peek(token_id)
+    if stored is None:
+        return None
+    return CapabilityToken(**stored.__dict__)
 
 
 def _ensure_keys() -> None:
@@ -144,22 +157,10 @@ def issue_token(
         signature=signature,
     )
 
-    if len(_issued_tokens) >= _MAX_ISSUED_TOKENS:
-        _evict_stale_tokens()
-
-    _issued_tokens[token_id] = token
+    stored = StoredCapabilityToken(**token.__dict__)
+    get_token_store().put(stored, ttl_seconds=max(ttl_seconds, 1))
     logger.info("Issued capability token %s for trace %s action %s", token_id, trace_id, action_type)
     return token
-
-
-def _evict_stale_tokens() -> None:
-    """Remove consumed and expired tokens to bound memory usage."""
-    now = datetime.now(UTC)
-    stale = [tid for tid, t in _issued_tokens.items() if t.used or datetime.fromisoformat(t.expires_at) < now]
-    for tid in stale:
-        del _issued_tokens[tid]
-    if stale:
-        logger.debug("Evicted %d stale capability tokens", len(stale))
 
 
 def verify_and_consume(token_id: str) -> tuple[bool, str]:
@@ -168,29 +169,26 @@ def verify_and_consume(token_id: str) -> tuple[bool, str]:
 
     Returns (valid, reason).
     """
-    token = _issued_tokens.get(token_id)
-    if not token:
+    stored = get_token_store().pop(token_id)
+    if stored is None:
         return False, "Token not found"
 
-    if token.used:
-        return False, "Token already consumed"
-
-    expires = datetime.fromisoformat(token.expires_at)
+    expires = datetime.fromisoformat(stored.expires_at)
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
     if datetime.now(UTC) > expires:
         return False, "Token expired"
 
     payload = {
-        "token_id": token.token_id,
-        "trace_id": token.trace_id,
-        "action_type": token.action_type,
-        "scope": token.scope,
-        "issued_at": token.issued_at,
-        "expires_at": token.expires_at,
+        "token_id": stored.token_id,
+        "trace_id": stored.trace_id,
+        "action_type": stored.action_type,
+        "scope": stored.scope,
+        "issued_at": stored.issued_at,
+        "expires_at": stored.expires_at,
     }
-    if not verify_signature(payload, token.signature):
+    if not verify_signature(payload, stored.signature):
         return False, "Invalid signature"
 
-    token.used = True
-    del _issued_tokens[token_id]
     logger.info("Consumed token %s", token_id)
     return True, "Valid"

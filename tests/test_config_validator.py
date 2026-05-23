@@ -42,6 +42,7 @@ def _make_settings(**overrides: object) -> Settings:
         "DB_POOL_RECYCLE": 1800,
         "DB_POOL_PRE_PING": True,
         "DB_POOL_TIMEOUT": 30,
+        "ECDSA_PRIVATE_KEY_PATH": "",
     }
     defaults.update(overrides)
     s = Settings()
@@ -245,6 +246,31 @@ class TestProviders:
         assert not any("LOCAL_HF_MODEL_ID" in w for w in warnings)
 
 
+class TestSecurityProduction:
+    def test_ecdsa_unset_in_prod_warns(self):
+        s = _make_settings(
+            ENVIRONMENT="production",
+            NEXUS_API_KEY="key",
+            SESSION_SECRET="secret",
+            APPROVAL_REVIEWERS="alice",
+            ECDSA_PRIVATE_KEY_PATH="",
+        )
+        warnings = _warnings(validate(s))
+        assert any("ECDSA_PRIVATE_KEY_PATH" in w for w in warnings)
+
+    def test_ecdsa_missing_file_in_prod_errors(self, tmp_path):
+        missing = str(tmp_path / "missing.pem")
+        s = _make_settings(
+            ENVIRONMENT="production",
+            NEXUS_API_KEY="key",
+            SESSION_SECRET="secret",
+            APPROVAL_REVIEWERS="alice",
+            ECDSA_PRIVATE_KEY_PATH=missing,
+        )
+        errors = _errors(validate(s))
+        assert any("ECDSA_PRIVATE_KEY_PATH" in e for e in errors)
+
+
 class TestDatabase:
     def test_sqlite_in_prod_warns(self):
         s = _make_settings(
@@ -275,6 +301,7 @@ class TestMultiWorker:
         s = _make_settings(RATE_LIMIT_RPM=30, REDIS_URL="")
         warnings = _warnings(validate(s))
         assert any("REDIS_URL" in w for w in warnings)
+        assert any("Capability tokens" in w for w in warnings)
 
     @patch.dict(os.environ, {"GUNICORN_WORKERS": "4"})
     def test_multi_worker_with_redis_no_warn(self):

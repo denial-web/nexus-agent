@@ -396,6 +396,13 @@ def test_agent_resume_rejects_approval_payload_tampering(
     assert run_resp.status_code == 200
     data = run_resp.json()
     assert data["status"] == "pending_approval"
+    assert data.get("response") is None
+    assert data["agent_state"]["pending_tool"]["tool"] == "shell_exec"
+    assert data["agent_state"]["pending_tool"]["arguments_withheld"] is True
+    assert "arguments" not in data["agent_state"]["pending_tool"]
+    assert "messages" not in data["agent_state"]
+    assert data["agent_state"].get("messages_withheld") is True
+    assert data.get("trajectory") == []
     trace_id = data["trace_id"]
     req_id = data["approval_request_id"]
 
