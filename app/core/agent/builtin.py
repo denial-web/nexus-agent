@@ -1,10 +1,12 @@
 """Built-in tools: shell, files, web, search."""
 
+import ipaddress
 import logging
+import socket
 import subprocess
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from app.config import settings
@@ -13,19 +15,64 @@ from app.core.agent.types import RegisteredTool, ToolResult
 logger = logging.getLogger(__name__)
 
 
-_BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "[::1]", "169.254.169.254"}
+_BLOCKED_HOSTNAMES = frozenset(
+    {
+        "localhost",
+        "localhost.localdomain",
+        "metadata.google.internal",
+    }
+)
+
+
+def _is_blocked_ip(ip_str: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _hostname_is_blocked(host: str) -> bool:
+    normalized = host.lower().strip(".")
+    if not normalized:
+        return True
+    if normalized in _BLOCKED_HOSTNAMES or normalized.endswith(".internal"):
+        return True
+
+    literal = normalized.strip("[]")
+    try:
+        ipaddress.ip_address(literal)
+    except ValueError:
+        pass
+    else:
+        return _is_blocked_ip(literal)
+
+    try:
+        resolved = socket.getaddrinfo(normalized, None, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return True
+
+    for _, _, _, _, sockaddr in resolved:
+        addr = sockaddr[0]
+        if _is_blocked_ip(addr):
+            return True
+    return False
 
 
 def _is_blocked_host(url: str) -> bool:
     try:
         parsed = urlparse(url)
-        host = (parsed.hostname or "").lower()
-        return (
-            host in _BLOCKED_HOSTS
-            or host.endswith(".internal")
-            or host.startswith("10.")
-            or host.startswith("192.168.")
-        )
+        if parsed.scheme not in {"http", "https"}:
+            return True
+        host = parsed.hostname or ""
+        return _hostname_is_blocked(host)
     except Exception:
         return True
 
@@ -181,14 +228,15 @@ class WebFetchTool(RegisteredTool):
                 hops = 0
                 while r.is_redirect and hops < 5:
                     location = r.headers.get("location", "")
-                    if _is_blocked_host(location):
+                    next_url = urljoin(str(r.url), location)
+                    if _is_blocked_host(next_url):
                         return ToolResult(
                             success=False,
                             output="",
-                            error=f"Redirect to blocked host: {location}",
+                            error=f"Redirect to blocked host: {next_url}",
                             http_status=r.status_code,
                         )
-                    r = client.get(location)
+                    r = client.get(next_url)
                     hops += 1
             body = r.text
             max_c = settings.AGENT_TOOL_OUTPUT_MAX_CHARS

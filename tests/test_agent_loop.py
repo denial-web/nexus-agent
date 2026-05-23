@@ -1,7 +1,8 @@
 """Agentic loop and API tests."""
 
+import socket
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from app.agent.agent_loop import (
@@ -517,6 +518,102 @@ def test_web_fetch_blocked_internal_ip() -> None:
     r = tool.execute({"url": "http://169.254.169.254/latest/meta-data/"}, Path("/tmp"))
     assert not r.success
     assert "Blocked" in (r.error or "")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/",
+        "http://[::1]/",
+        "http://172.16.0.1/",
+        "http://10.0.0.5/",
+        "http://192.168.1.10/",
+        "http://0.0.0.0/",
+        "file:///etc/passwd",
+    ],
+)
+def test_is_blocked_host_private_literals(url: str) -> None:
+    from app.core.agent.builtin import _is_blocked_host
+
+    assert _is_blocked_host(url)
+
+
+def test_is_blocked_host_public_literal() -> None:
+    from app.core.agent.builtin import _is_blocked_host
+
+    assert not _is_blocked_host("http://93.184.216.34/")
+
+
+@patch("app.core.agent.builtin.socket.getaddrinfo")
+def test_is_blocked_host_dns_private_resolution(mock_getaddrinfo: MagicMock) -> None:
+    from app.core.agent.builtin import _is_blocked_host
+
+    mock_getaddrinfo.return_value = [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0)),
+    ]
+    assert _is_blocked_host("http://rebind.example.com/")
+
+
+@patch("app.core.agent.builtin.socket.getaddrinfo")
+def test_is_blocked_host_dns_public_resolution(mock_getaddrinfo: MagicMock) -> None:
+    from app.core.agent.builtin import _is_blocked_host
+
+    mock_getaddrinfo.return_value = [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+    ]
+    assert not _is_blocked_host("http://example.com/")
+
+
+@patch("app.core.agent.builtin.httpx.Client")
+def test_web_fetch_blocks_redirect_to_private(mock_client_cls: MagicMock) -> None:
+    from app.core.agent.builtin import WebFetchTool
+
+    redirect_response = MagicMock()
+    redirect_response.is_redirect = True
+    redirect_response.status_code = 302
+    redirect_response.headers = {"location": "http://127.0.0.1/secret"}
+    redirect_response.url = "https://example.com/start"
+
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.get.return_value = redirect_response
+    mock_client_cls.return_value = client
+
+    tool = WebFetchTool()
+    with patch("app.core.agent.builtin._is_blocked_host", side_effect=lambda url: "127.0.0.1" in url):
+        result = tool.execute({"url": "https://example.com/start"}, Path("/tmp"))
+
+    assert not result.success
+    assert "Redirect to blocked host" in (result.error or "")
+    client.get.assert_called_once()
+
+
+@patch("app.core.agent.builtin.httpx.Client")
+def test_web_fetch_resolves_relative_redirect_before_fetch(mock_client_cls: MagicMock) -> None:
+    from app.core.agent.builtin import WebFetchTool
+
+    redirect_response = MagicMock()
+    redirect_response.is_redirect = True
+    redirect_response.status_code = 302
+    redirect_response.headers = {"location": "/internal"}
+    redirect_response.url = "https://example.com/start"
+
+    final_response = MagicMock()
+    final_response.is_redirect = False
+    final_response.status_code = 200
+    final_response.text = "ok"
+
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.get.side_effect = [redirect_response, final_response]
+    mock_client_cls.return_value = client
+
+    tool = WebFetchTool()
+    with patch("app.core.agent.builtin._is_blocked_host", return_value=False):
+        result = tool.execute({"url": "https://example.com/start"}, Path("/tmp"))
+
+    assert result.success
+    client.get.assert_any_call("https://example.com/internal")
 
 
 def test_web_fetch_local_only(monkeypatch: pytest.MonkeyPatch) -> None:
