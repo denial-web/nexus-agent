@@ -38,6 +38,11 @@ services:
       DATABASE_URL: "postgresql://nexus:${POSTGRES_PASSWORD:-nexus}@postgres:5432/nexus_db"
       REDIS_URL: "redis://redis:6379/0"
       ENVIRONMENT: "production"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      APPROVAL_REVIEWERS: "${APPROVAL_REVIEWERS}"
+      APPROVAL_QUORUM: "${APPROVAL_QUORUM:-2}"
+      NEXUS_API_KEY: "${NEXUS_API_KEY}"
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-2}"
     depends_on:
       postgres:
         condition: service_healthy

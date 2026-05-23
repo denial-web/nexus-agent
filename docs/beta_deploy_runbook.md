@@ -40,6 +40,11 @@ POSTGRES_PASSWORD=<strong-postgres-password>
 ENVIRONMENT=production
 ```
 
+For Docker Compose prod, put these in `.env` **or** export them in the shell before
+`docker compose --profile prod up`. The `nexus-prod` service passes
+`SESSION_SECRET`, `APPROVAL_REVIEWERS`, `APPROVAL_QUORUM`, and `NEXUS_API_KEY`
+through explicitly so production boot fails fast when they are missing.
+
 Generate secrets locally:
 
 ```bash
@@ -61,8 +66,12 @@ explicit product decision.
 Start explicit prod services. Do not start the whole profile:
 
 ```bash
-GUNICORN_WORKERS=1 docker compose --profile prod up --build -d postgres redis nexus-prod
+GUNICORN_WORKERS=1 APPROVAL_QUORUM=1 APPROVAL_REVIEWERS=smoke-reviewer \
+  docker compose --profile prod up --build -d postgres redis nexus-prod
 ```
+
+Export `SESSION_SECRET`, `NEXUS_API_KEY`, and `POSTGRES_PASSWORD` in the same shell
+(or put them in `.env`) before running the command above.
 
 Avoid:
 
@@ -174,10 +183,20 @@ docker compose --profile prod exec nexus-prod alembic current
 
 ## 9. Known Follow-Ups
 
-- The streaming endpoint still emits tokens before post-generation governance
-  and output scans. Treat it as a separate hardening item before claiming strict
-  zero-trust streaming.
-- Trace hash coverage should be expanded to include governance, critic, scan,
-  model, and error fields, or a second full-record audit hash should be added.
-- `web_fetch` SSRF coverage should be audited for IPv6 loopback, RFC1918,
-  metadata IPs, DNS rebinding, and redirects.
+Completed on `master` as of 2026-05-23:
+
+- Streaming zero-trust default (`STREAM_ZERO_TRUST_MODE=buffered`) — tokens withheld
+  until critic, governance, and output scans pass.
+- Full-record trace audit hash (`full_record_hash`) — governance, critic, scan,
+  model, error, and agent metadata tamper detection.
+- `web_fetch` SSRF hardening — private/loopback/link-local ranges, DNS-to-private
+  resolution, redirect validation.
+- Pending-approval response withholding on `/v1/agent/run` and agent endpoints.
+- `/v1/agent/compare` returns no winner when all candidates are halted or
+  output-blocked.
+
+Remaining before public launch (non-blocking for beta smoke):
+
+- Hosted deploy target confirmation (Fly/Railway/VPS) and TLS termination.
+- Show HN / launch copy final review (drafts live in `~/nexus-launch-drafts/`).
+- Optional: redact halted/blocked candidate bodies in compare responses.
