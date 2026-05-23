@@ -81,7 +81,9 @@ def _trace_to_record(trace: Trace) -> dict[str, Any]:
         "model_id": trace.model_id,
         "latency_ms": trace.latency_ms,
         "token_count": trace.token_count,
+        "prev_hash": trace.prev_hash,
         "trace_hash": trace.trace_hash,
+        "full_record_hash": trace.full_record_hash,
     }
     if trace.error:
         data["error"] = trace.error

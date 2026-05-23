@@ -1,7 +1,9 @@
 """Tamper-evident trace hash chain verification."""
 
 import hashlib
+import json
 import logging
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -19,6 +21,68 @@ def compute_trace_hash(
     rh = response_hash or ""
     payload = f"{trace_id}:{prev_hash}:{prompt_hash}:{rh}:{status}"
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+_FULL_RECORD_FIELDS = (
+    "id",
+    "session_id",
+    "sequence",
+    "prompt",
+    "prompt_hash",
+    "immune_verdict",
+    "immune_score",
+    "immune_details",
+    "asflc_result",
+    "asflc_chosen_path",
+    "asflc_confidence",
+    "asflc_loops",
+    "critic_verdict",
+    "critic_scores",
+    "critic_rollback_count",
+    "governance_status",
+    "governance_policy_id",
+    "governance_token_id",
+    "response",
+    "response_hash",
+    "output_scan_verdict",
+    "model_id",
+    "latency_ms",
+    "token_count",
+    "error",
+    "status",
+    "prev_hash",
+    "trace_hash",
+    "run_mode",
+    "task_reward_score",
+    "user_feedback",
+    "total_steps",
+    "self_corrections",
+    "agent_state",
+    "agent_trajectory",
+    "mcp_backend",
+    "mcp_tool_name",
+    "beliefs_used",
+    "beliefs_formed",
+)
+
+
+def _canonicalize(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _canonicalize(v) for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, (list, tuple)):
+        return [_canonicalize(v) for v in value]
+    return value
+
+
+def compute_full_record_hash(trace: Any) -> str:
+    """Hash all persisted trace audit fields except full_record_hash itself."""
+    payload = {field: _canonicalize(getattr(trace, field, None)) for field in _FULL_RECORD_FIELDS}
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 _MAX_CHAIN_TRACES = 10_000
@@ -75,6 +139,18 @@ def verify_chain(session_id: str, db_session: Session) -> list[dict[str, Any]]:
                 }
             )
 
+        if getattr(t, "full_record_hash", None):
+            expected_full = compute_full_record_hash(t)
+            if t.full_record_hash != expected_full:
+                problems.append(
+                    {
+                        "trace_id": t.id,
+                        "issue": "full_record_hash_mismatch",
+                        "expected": expected_full,
+                        "got": t.full_record_hash,
+                    }
+                )
+
         prev_trace_hash = t.trace_hash
 
     return problems
@@ -109,5 +185,7 @@ def cascade_rehash_from_trace(db_session: Session, trace_id: str) -> None:
             current.response_hash,
             current.status,
         )
+        if hasattr(current, "full_record_hash"):
+            current.full_record_hash = compute_full_record_hash(current)
         if i + 1 < len(remaining):
             remaining[i + 1].prev_hash = current.trace_hash

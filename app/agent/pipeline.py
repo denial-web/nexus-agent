@@ -766,7 +766,7 @@ def _persist_trace(result: PipelineResult, prompt: str, db_session: Session | No
         return
 
     from app.models.trace import Trace
-    from app.services.integrity import compute_trace_hash
+    from app.services.integrity import compute_full_record_hash, compute_trace_hash
 
     prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
     response_hash = hashlib.sha256(result.response.encode()).hexdigest() if result.response else None
@@ -812,6 +812,7 @@ def _persist_trace(result: PipelineResult, prompt: str, db_session: Session | No
         output_scan_verdict=result.immune_output.get("verdict"),
         latency_ms=result.latency_ms,
         status=result.status,
+        created_at=datetime.now(UTC),
         error=result.error,
         model_id=result.model_id_used,
         token_count=result.token_count,
@@ -825,6 +826,7 @@ def _persist_trace(result: PipelineResult, prompt: str, db_session: Session | No
         agent_state=result.agent_state,
         agent_trajectory=result.agent_trajectory,
     )
+    trace.full_record_hash = compute_full_record_hash(trace)
 
     try:
         db_session.add(trace)

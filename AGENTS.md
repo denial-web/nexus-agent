@@ -204,7 +204,7 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 
 - **Default-deny governance**: Unknown actions are always denied. Policies must explicitly allow.
 - **Critic tree, not flat scoring**: The Arbiter pattern allows adding/removing critic nodes at runtime via the DB.
-- **Hash chain traces**: Each trace has `prev_hash` and `trace_hash` for tamper-evident audit logs.
+- **Hash chain traces**: Each trace has `prev_hash` and `trace_hash` for tamper-evident chain links, plus `full_record_hash` for governance, critic, scan, model, error, and agent metadata tamper detection.
 - **[UNC] token insertion**: On rollback, the Arbiter inserts uncertainty markers during streaming evaluation.
 - **ECDSA capability tokens**: After K-of-N approval, a signed single-use token is issued and verified cryptographically.
 - **Prompt hardening**: Flagged (but not blocked) prompts have injection fragments stripped before LLM generation. Hardening patterns mirror all 11-language scanner patterns to prevent non-English bypass.

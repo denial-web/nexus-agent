@@ -826,7 +826,7 @@ Every failure (critic halt, governance denial, immune block, memory denial) is p
 
 ### Hash Chain Integrity
 
-Every trace is linked to the previous trace in its session via `prev_hash` → `trace_hash`, forming a tamper-evident chain. Beliefs have their own per-user chain. Verify:
+Every trace is linked to the previous trace in its session via `prev_hash` → `trace_hash`, forming a tamper-evident chain. New trace rows also carry a `full_record_hash` over persisted audit fields such as scan verdicts, critic scores, governance decisions, model metadata, token counts, errors, and agent trajectory fields, so post-hoc edits to those fields fail verification. Beliefs have their own per-user chain. Verify:
 
 ```bash
 # Trace chain

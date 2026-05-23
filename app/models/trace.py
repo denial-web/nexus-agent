@@ -61,6 +61,10 @@ class Trace(Base):
     # SHA-256 hash chain — each trace links to the previous
     prev_hash = Column(String(64), nullable=True)
     trace_hash = Column(String(64), nullable=True)
+    # Full-record audit hash — additive hardening over trace_hash. Covers
+    # governance, critic, scan, model, error, and other persisted audit fields.
+    # Nullable so rows written before this column remain verifiable.
+    full_record_hash = Column(String(64), nullable=True)
 
     # Agentic runs (run_agent / digital employee)
     run_mode = Column(String(20), nullable=True)  # "pipeline" | "agent"

@@ -125,19 +125,66 @@ class TestPipeline:
         assert r3.status == "completed"
 
         from app.models.trace import Trace
-        from app.services.integrity import verify_chain
+        from app.services.integrity import compute_full_record_hash, verify_chain
 
         t1 = db_session.query(Trace).filter_by(id=r1.trace_id).first()
         t2 = db_session.query(Trace).filter_by(id=r2.trace_id).first()
         t3 = db_session.query(Trace).filter_by(id=r3.trace_id).first()
         assert t1.prev_hash == "genesis"
         assert t1.trace_hash
+        assert t1.full_record_hash == compute_full_record_hash(t1)
         assert t2.prev_hash == t1.trace_hash
         assert t3.prev_hash == t2.trace_hash
         assert t1.sequence == 0
         assert t2.sequence == 1
         assert t3.sequence == 2
         assert verify_chain(sid, db_session) == []
+
+    def test_full_record_hash_detects_governance_tamper(self, db_session):
+        sid = "full-record-governance"
+        result = run("hello", session_id=sid, db_session=db_session)
+        assert result.status == "completed"
+
+        from app.models.trace import Trace
+        from app.services.integrity import verify_chain
+
+        trace = db_session.query(Trace).filter_by(id=result.trace_id).one()
+        trace.governance_status = "denied"
+        db_session.commit()
+
+        problems = verify_chain(sid, db_session)
+        assert any(p["issue"] == "full_record_hash_mismatch" for p in problems)
+
+    def test_full_record_hash_detects_critic_tamper(self, db_session):
+        sid = "full-record-critic"
+        result = run("hello", session_id=sid, db_session=db_session)
+        assert result.status == "completed"
+
+        from app.models.trace import Trace
+        from app.services.integrity import verify_chain
+
+        trace = db_session.query(Trace).filter_by(id=result.trace_id).one()
+        trace.critic_scores = {"safety": {"score": 0.0, "verdict": "fail"}}
+        db_session.commit()
+
+        problems = verify_chain(sid, db_session)
+        assert any(p["issue"] == "full_record_hash_mismatch" for p in problems)
+
+    def test_full_record_hash_detects_model_and_error_tamper(self, db_session):
+        sid = "full-record-model-error"
+        result = run("hello", session_id=sid, db_session=db_session)
+        assert result.status == "completed"
+
+        from app.models.trace import Trace
+        from app.services.integrity import verify_chain
+
+        trace = db_session.query(Trace).filter_by(id=result.trace_id).one()
+        trace.model_id = "tampered-model"
+        trace.error = "tampered error"
+        db_session.commit()
+
+        problems = verify_chain(sid, db_session)
+        assert any(p["issue"] == "full_record_hash_mismatch" for p in problems)
 
     def test_critic_halt_queues_and_persists(self, db_session):
         halt_result = ArbiterResult(

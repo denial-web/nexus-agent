@@ -51,12 +51,20 @@ def _make_approval(db, **overrides):
 
 class TestTraceToRecord:
     def test_normal_pipeline_run(self, db_session):
-        trace = _make_trace(db_session)
+        trace = _make_trace(
+            db_session,
+            prev_hash="genesis",
+            trace_hash="a" * 64,
+            full_record_hash="b" * 64,
+        )
         record = _trace_to_record(trace)
         assert record["event_type"] == "pipeline_run"
         assert record["severity"] == "info"
         assert record["source"] == "nexus-agent"
         assert record["data"]["trace_id"] == trace.id
+        assert record["data"]["prev_hash"] == trace.prev_hash
+        assert record["data"]["trace_hash"] == trace.trace_hash
+        assert record["data"]["full_record_hash"] == trace.full_record_hash
         assert "timestamp" in record
 
     def test_input_blocked(self, db_session):
