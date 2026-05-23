@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     MAX_REQUEST_BODY_BYTES: int = 10_485_760  # 10 MB
     REQUEST_TIMEOUT_SECONDS: float = 120.0
     SHUTDOWN_DRAIN_SECONDS: float = 30.0
+    STREAM_ZERO_TRUST_MODE: str = "buffered"  # "buffered" (default) or "preview"
 
     # Legacy /api/ route deprecation (RFC 8594); empty = no Sunset header
     API_LEGACY_SUNSET: str = ""  # ISO date, e.g. "2026-12-31"

@@ -128,12 +128,16 @@ Prompt
 
 ### Streaming Mode (`POST /v1/agent/stream`)
 
-The same pipeline runs as SSE (Server-Sent Events). LLM tokens stream to the
-client in real-time, then critic/governance/output scans run on the accumulated
-response. Events:
+The same pipeline runs as SSE (Server-Sent Events). By default
+(`STREAM_ZERO_TRUST_MODE=buffered`), LLM chunks are accumulated server-side;
+critic/governance/output scans run on the accumulated response; token events are
+emitted only after the response passes all post-generation checks. Set
+`STREAM_ZERO_TRUST_MODE=preview` only for explicit non-zero-trust early-token
+preview mode. Events:
 
 - `event: status` — pipeline stage transitions (`input_scan`, `generating`, `evaluating`)
-- `event: token` — individual LLM tokens (`{"text": "...", "index": N}`)
+- `event: token` — individual LLM tokens (`{"text": "...", "index": N}`),
+  emitted only after checks pass unless preview mode is enabled
 - `event: done` — final result with trace_id, status, latency
 - `event: error` — blocked/halted/error with reason
 
@@ -208,7 +212,7 @@ Dashboard: visit `http://localhost:9000/dashboard` after starting the server.
 - **Approval concurrency safety**: Approval votes use `SELECT … FOR UPDATE` row locks and a unique DB constraint on `(request_id, approver_id)` to prevent lost updates and duplicate votes under concurrency.
 - **Session escalation**: Repeated suspicious prompts in the same session accumulate score until the session is auto-blocked.
 - **Multi-model evaluation**: `POST /api/agent/compare` fires parallel LLM calls via `generate_multi()`, runs the Arbiter critic tree on each candidate, applies Covernor governance on the winner, and returns the highest-scoring viable response. Flagged prompts are hardened before generation. Timeout configurable via `COMPARE_TIMEOUT_SECONDS`.
-- **SSE streaming**: `POST /api/agent/stream` runs the same zero-trust pipeline but streams LLM tokens as SSE events. Immune scan and hardening run synchronously before generation. Critic evaluation, governance check (including `require_approval`), and output scan run on the accumulated response after all tokens arrive. CriticScore objects are serialized to JSON-safe dicts before trace persistence. Model ID and token counts are resolved from the provider route, not hardcoded.
+- **SSE streaming**: `POST /api/agent/stream` runs the same zero-trust pipeline as SSE. Immune scan and hardening run synchronously before generation. With `STREAM_ZERO_TRUST_MODE=buffered` (default), generated chunks are held server-side until critic evaluation, governance check (including `require_approval`), and output scan pass, then token events are emitted. `STREAM_ZERO_TRUST_MODE=preview` is an explicit non-zero-trust early-token mode. CriticScore objects are serialized to JSON-safe dicts before trace persistence. Model ID and token counts are resolved from the provider route, not hardcoded.
 - **A-S-FLC resilience**: `build_paths_from_llm_output` gracefully skips non-dict events and unconvertible values. The analyzer wraps path building in `try/except` and falls back to default paths on any structural error.
 - **Dashboard vote error surfacing**: Dashboard vote endpoint returns an error page with the failure message (and back-link) instead of silently redirecting on error.
 - **Secure-by-default metrics**: `EXPOSE_METRICS` defaults to `False`; operators must opt in via `.env`.

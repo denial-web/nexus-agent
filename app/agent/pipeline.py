@@ -442,6 +442,10 @@ def run_stream(
       {"event": "status", "data": {"step": "...", ...}}
       {"event": "done", "data": {<final PipelineResult fields>}}
       {"event": "error", "data": {"error": "..."}}
+
+    STREAM_ZERO_TRUST_MODE=buffered (default) withholds token events until
+    critic, governance, and output scanning pass. STREAM_ZERO_TRUST_MODE=preview
+    preserves the old early-token behavior and is explicitly non-zero-trust.
     """
     from app.core.llm.models import LLMChunk
     from app.core.llm.provider import _resolve_route, generate_stream
@@ -451,7 +455,19 @@ def run_stream(
     session_id = session_id or uuid.uuid4().hex
     result = PipelineResult(trace_id=trace_id, session_id=session_id, status="pending")
 
-    yield {"event": "status", "data": {"step": "input_scan", "trace_id": trace_id}}
+    stream_mode = settings.STREAM_ZERO_TRUST_MODE.strip().lower()
+    if stream_mode not in {"buffered", "preview"}:
+        logger.warning(
+            "Invalid STREAM_ZERO_TRUST_MODE=%r; defaulting to buffered",
+            settings.STREAM_ZERO_TRUST_MODE,
+        )
+        stream_mode = "buffered"
+    preview_mode = stream_mode == "preview"
+
+    yield {
+        "event": "status",
+        "data": {"step": "input_scan", "trace_id": trace_id, "stream_mode": stream_mode},
+    }
 
     input_scan = scan_input(prompt, session_id=session_id)
     result.immune_input = {
@@ -553,7 +569,11 @@ def run_stream(
     accumulated = ""
     for chunk in chunks:
         accumulated += chunk.text
-        yield {"event": "token", "data": {"text": chunk.text, "index": chunk.index}}
+        if preview_mode:
+            yield {
+                "event": "token",
+                "data": {"text": chunk.text, "index": chunk.index, "mode": "preview"},
+            }
 
     response = accumulated.strip()
     _, resolved_model, _ = _resolve_route(model_id)
@@ -711,12 +731,21 @@ def run_stream(
     result.latency_ms = _elapsed(start)
     _persist_trace(result, prompt, db_session)
     _record_run(result)
+
+    if not preview_mode:
+        for chunk in chunks:
+            yield {
+                "event": "token",
+                "data": {"text": chunk.text, "index": chunk.index, "mode": "buffered"},
+            }
+
     yield {
         "event": "done",
         "data": {
             "trace_id": trace_id,
             "session_id": session_id,
             "status": "completed",
+            "stream_mode": stream_mode,
             "model_id": result.model_id_used,
             "token_count": result.token_count,
             "latency_ms": result.latency_ms,

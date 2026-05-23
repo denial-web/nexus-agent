@@ -66,6 +66,7 @@ class TestStreamEndpoint:
 
         done = next(e for e in events if e["event"] == "done")
         assert done["data"]["status"] == "completed"
+        assert done["data"]["stream_mode"] == "buffered"
         assert "trace_id" in done["data"]
 
     def test_stream_empty_prompt_rejected(self, client):
@@ -132,7 +133,7 @@ class TestStreamCriticHalt:
         events = _parse_sse(resp.text)
 
         token_events = [e for e in events if e["event"] == "token"]
-        assert len(token_events) == 2
+        assert len(token_events) == 0
 
         error_events = [e for e in events if e["event"] == "error"]
         assert len(error_events) == 1
@@ -167,6 +168,9 @@ class TestStreamOutputBlocked:
         assert error_events[0]["data"]["status"] == "blocked"
         assert "output" in error_events[0]["data"]["error"].lower()
 
+        token_events = [e for e in events if e["event"] == "token"]
+        assert len(token_events) == 0
+
 
 class TestStreamLLMError:
     """LLM generation failure is handled gracefully."""
@@ -190,7 +194,7 @@ class TestStreamLLMError:
 
 
 class TestStreamRequireApproval:
-    """Governance require_approval halts the stream after tokens."""
+    """Governance require_approval withholds tokens by default."""
 
     def test_stream_pending_approval(self, client):
         mock_chunks = [
@@ -223,7 +227,7 @@ class TestStreamRequireApproval:
         events = _parse_sse(resp.text)
 
         token_events = [e for e in events if e["event"] == "token"]
-        assert len(token_events) == 2
+        assert len(token_events) == 0
 
         error_events = [e for e in events if e["event"] == "error"]
         assert len(error_events) == 1
@@ -232,6 +236,45 @@ class TestStreamRequireApproval:
 
         done_events = [e for e in events if e["event"] == "done"]
         assert len(done_events) == 0
+
+    def test_stream_pending_approval_preview_mode_emits_early_tokens(self, client, monkeypatch):
+        monkeypatch.setattr("app.config.settings.STREAM_ZERO_TRUST_MODE", "preview")
+        mock_chunks = [
+            LLMChunk(text="Sensitive ", index=0),
+            LLMChunk(text="action", index=1, is_final=True),
+        ]
+
+        from app.core.covernor.policy_engine import PolicyDecision
+
+        approval_decision = PolicyDecision(
+            action="respond",
+            decision="require_approval",
+            policy_id="pol-1",
+            policy_name="high-risk-policy",
+            risk_level="high",
+            required_approvals=2,
+            reason="High risk action requires approval",
+        )
+
+        with (
+            patch("app.core.llm.provider.generate_stream", return_value=iter(mock_chunks)),
+            patch("app.agent.pipeline.get_arbiter") as mock_arb,
+            patch("app.agent.pipeline.evaluate_action", return_value=approval_decision),
+        ):
+            mock_arb.return_value.evaluate.return_value = _make_critic()
+
+            resp = client.post("/api/agent/stream", json={"prompt": "Do something risky"})
+
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+
+        token_events = [e for e in events if e["event"] == "token"]
+        assert [e["data"]["text"] for e in token_events] == ["Sensitive ", "action"]
+        assert {e["data"]["mode"] for e in token_events} == {"preview"}
+
+        error_events = [e for e in events if e["event"] == "error"]
+        assert len(error_events) == 1
+        assert error_events[0]["data"]["status"] == "pending_approval"
 
 
 class TestStreamGovernanceDeny:
@@ -271,6 +314,9 @@ class TestStreamGovernanceDeny:
         assert error_events[0]["data"]["status"] == "blocked"
         assert "governance" in error_events[0]["data"]["error"].lower()
 
+        token_events = [e for e in events if e["event"] == "token"]
+        assert len(token_events) == 0
+
 
 class TestStreamCriticException:
     """Critic exception during stream is handled and pushed to labeling queue."""
@@ -297,3 +343,6 @@ class TestStreamCriticException:
 
         done_events = [e for e in events if e["event"] == "done"]
         assert len(done_events) == 0
+
+        token_events = [e for e in events if e["event"] == "token"]
+        assert len(token_events) == 0

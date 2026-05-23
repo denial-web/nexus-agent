@@ -528,7 +528,7 @@ curl -X POST http://localhost:9000/v1/agent/run \
 
 Supports `Idempotency-Key` header for safe retries.
 
-#### `POST /v1/agent/stream` — Stream tokens via SSE
+#### `POST /v1/agent/stream` — Stream checked tokens via SSE
 
 Same request body as `/run`. Returns Server-Sent Events:
 
@@ -543,6 +543,12 @@ Events:
 - `event: token` — `{"text": "...", "index": 0}`
 - `event: done` — `{"trace_id": "...", "status": "completed", "latency_ms": 1234}`
 - `event: error` — `{"status": "blocked", "error": "..."}`
+
+By default, `STREAM_ZERO_TRUST_MODE=buffered`: Nexus buffers model chunks server-side, runs
+critic evaluation, governance, and output scanning, then emits token events only for responses
+that pass. Set `STREAM_ZERO_TRUST_MODE=preview` only when you explicitly want early token
+preview; preview mode can emit content before post-generation checks and is not strict
+zero-trust streaming.
 
 #### `POST /v1/agent/compare` — Multi-model comparison
 
