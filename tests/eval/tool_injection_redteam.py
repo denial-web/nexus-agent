@@ -403,7 +403,10 @@ def run_tool_injection_redteam() -> ToolInjectionResult:
     for v in corpus:
         payload = _serialize_tool_call(v)
         # session_id=None so each vector is scored on its own merits.
-        result = scan_input(payload, session_id=None)
+        # treat_quoted_as_data=False mirrors the proxy: a serialized tool
+        # payload's quotes are structural JSON, not a use/mention, so the
+        # quoted-data relaxation must not apply at this boundary.
+        result = scan_input(payload, session_id=None, treat_quoted_as_data=False)
         # "Blocked" at the tool-call boundary = the MCP proxy would
         # raise ToolError. The proxy treats FLAG as block for tool
         # calls (see is_tool_call_blocked) because tool-call

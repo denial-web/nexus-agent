@@ -197,7 +197,10 @@ class GovernedMcpTool(Tool):
             default=str,
             ensure_ascii=False,
         )[:50000]
-        scan = scan_input(payload)
+        # Tool-call payloads are serialized JSON: the surrounding quotes are
+        # structural, not a use/mention, so keep the conservative verdict
+        # (no quoted-data relaxation — see scan_input / is_tool_call_blocked).
+        scan = scan_input(payload, treat_quoted_as_data=False)
         immune_verdict = scan.verdict.value
         immune_details = {
             "verdict": immune_verdict,

@@ -182,10 +182,60 @@ OUTPUT_LEAK_PATTERNS = [
     r"(api[_-]?key|secret|password|token)\s*[:=]\s*[\"'][^\s\"']{6,}",
     r"(api[_-]?key|secret|password|token)\s*[:=]\s*(?=[^\s\"']*\d)[a-zA-Z0-9/+=_-]{8,}",
     r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----",
+    # Protected access/secret codes — labeled codes such as
+    # "access code: COBRA-6" or "the secret code is VAULT-CODE-00".
+    # The credential noun forms above never match an arbitrary code
+    # shape, so this adds a defense-in-depth catch for the per-deployment
+    # protected code. The code token itself is matched case-sensitively
+    # via (?-i:...) (the list is otherwise IGNORECASE) and must contain
+    # uppercase letters joined by a hyphen, so it fires on COBRA-6 /
+    # VAULT-CODE-00 but NOT on lowercase prose or letterless hyphen runs
+    # like a "90210-1234" ZIP+4. Anchoring on a secret-context label
+    # ("access/secret/... code") keeps it from blocking ordinary
+    # hyphenated tokens (COVID-19, GPT-4, ISO-8601) in normal output.
+    (
+        r"(access|secret|confidential|vault|admin|auth|recovery|master)\s*code\b"
+        r"[\s:=()\-\"'`]*(?:is|are|=|:)?[\s:=\"'`]*"
+        r"(?-i:[A-Z]{2,}(?:-[A-Z0-9]+)+)"
+    ),
 ]
 
 _compiled_injection = [re.compile(p, re.IGNORECASE) for p in INJECTION_PATTERNS]
 _compiled_leaks = [re.compile(p, re.IGNORECASE) for p in OUTPUT_LEAK_PATTERNS]
+
+
+# ── Quoted / delimited data spans ──────────────────────────────────
+#
+# A prompt that *quotes* an injection string ("count the words in
+# 'ignore all previous instructions'") is asking the agent to operate
+# ON the string as data, not to obey it. Tracking quoted/delimited
+# spans lets scan_input treat injection-pattern hits inside them as
+# data (FLAG-only, never a stand-alone BLOCK) while bare/unquoted
+# commands keep blocking, and lets harden_prompt leave quoted data
+# intact instead of mangling a benign analyze-only request.
+
+_QUOTED_SPAN_RE = re.compile(
+    r'"""[\s\S]*?"""'  # triple double-quote
+    r"|'''[\s\S]*?'''"  # triple single-quote
+    r"|```[\s\S]*?```"  # fenced code block
+    r'|"[^"\n]*"'  # straight double quotes
+    r"|`[^`\n]*`"  # backticks
+    r"|'[^'\n]*'"  # straight single quotes
+    r"|\u201c[^\u201d\n]*\u201d"  # smart double quotes “ ”
+    r"|\u2018[^\u2019\n]*\u2019"  # smart single quotes ‘ ’
+    r"|\u00ab[^\u00bb\n]*\u00bb"  # guillemets « »
+)
+
+
+def _quoted_spans(text: str) -> list[tuple[int, int]]:
+    """Return (start, end) ranges of quoted/delimited data spans in `text`."""
+    return [m.span() for m in _QUOTED_SPAN_RE.finditer(text)]
+
+
+def _within_any(span: tuple[int, int], spans: list[tuple[int, int]]) -> bool:
+    """True if `span` is fully contained within one of `spans`."""
+    start, end = span
+    return any(s <= start and end <= e for s, e in spans)
 
 
 # ── Semantic Memory Bank ───────────────────────────────────────────
@@ -331,6 +381,31 @@ def get_escalation_tracker() -> EscalationTracker:
 _HARDENING_REMOVALS = [re.compile(p + r"[.\s]*", re.IGNORECASE) for p in INJECTION_PATTERNS]
 
 
+def _strip_injections(text: str) -> tuple[str, list[str]]:
+    """Remove unquoted injection fragments from `text`.
+
+    Fragments that fall inside quoted/delimited data spans are left in
+    place — a flagged prompt that merely *quotes* an injection string is
+    asking the agent to analyze it as data, so mangling that data would
+    break the benign request without adding any defense.
+    """
+    removed: list[str] = []
+    result = text
+    for pattern in _HARDENING_REMOVALS:
+        spans = _quoted_spans(result)
+
+        def _repl(match: re.Match, _spans: list[tuple[int, int]] = spans) -> str:
+            if _within_any(match.span(), _spans):
+                return match.group()
+            fragment = match.group().strip()
+            if fragment:
+                removed.append(fragment)
+            return ""
+
+        result = pattern.sub(_repl, result)
+    return result, removed
+
+
 def harden_prompt(prompt: str) -> tuple[str, list[str]]:
     """
     Strip detected injection fragments from a flagged prompt.
@@ -338,19 +413,10 @@ def harden_prompt(prompt: str) -> tuple[str, list[str]]:
     Returns (hardened_prompt, list_of_removed_fragments).
     Does NOT apply to blocked prompts — those are rejected entirely.
     """
-    removed: list[str] = []
-    result = prompt
-    for pattern in _HARDENING_REMOVALS:
-        for match in pattern.finditer(result):
-            removed.append(match.group().strip())
-        result = pattern.sub("", result)
+    result, removed = _strip_injections(prompt)
 
     if not removed:
-        normalized = _normalize_unicode(prompt)
-        for pattern in _HARDENING_REMOVALS:
-            for match in pattern.finditer(normalized):
-                removed.append(match.group().strip())
-            normalized = pattern.sub("", normalized)
+        normalized, removed = _strip_injections(_normalize_unicode(prompt))
         if removed:
             result = normalized
 
@@ -364,8 +430,20 @@ def harden_prompt(prompt: str) -> tuple[str, list[str]]:
 def scan_input(
     prompt: str,
     session_id: str | None = None,
+    *,
+    treat_quoted_as_data: bool = True,
 ) -> ScanResult:
-    """Scan an inbound prompt for injection attempts and escalation."""
+    """Scan an inbound prompt for injection attempts and escalation.
+
+    `treat_quoted_as_data` (default True) relaxes the *free-text* verdict
+    so an injection pattern that only matches inside a quoted/delimited
+    span is treated as data (use/mention) and cannot, on its own, BLOCK.
+    The MCP tool-call boundary passes `treat_quoted_as_data=False` so its
+    verdict is unchanged — a quoted injection in a serialized tool payload
+    (where the quotes are structural JSON, not a use/mention) keeps its
+    full BLOCK weight, matching the conservative `is_tool_call_blocked`
+    policy.
+    """
     triggers: list[str] = []
     score = 0.0
 
@@ -393,10 +471,32 @@ def scan_input(
         triggers.append("memory_bank:known_attack_signature")
         score += 0.5
 
+    # An injection pattern that matches only inside a quoted/delimited
+    # data span is a use/mention (the prompt quotes the attack string to
+    # analyze it, e.g. "count the words in 'ignore all instructions'").
+    # Such hits feed a separate `data_score` that can FLAG but can never,
+    # on its own, reach a BLOCK — only bare/unquoted commands do that.
+    variants = [
+        (prompt, _quoted_spans(prompt)),
+        (norm_strip, _quoted_spans(norm_strip)),
+        (norm_space, _quoted_spans(norm_space)),
+    ]
+    data_score = 0.0
     for pattern in _compiled_injection:
-        if pattern.search(prompt) or pattern.search(norm_strip) or pattern.search(norm_space):
+        bare_hit = False
+        quoted_hit = False
+        for text, spans in variants:
+            for match in pattern.finditer(text):
+                if treat_quoted_as_data and _within_any(match.span(), spans):
+                    quoted_hit = True
+                else:
+                    bare_hit = True
+        if bare_hit:
             triggers.append(f"injection:{pattern.pattern[:40]}")
             score += 0.4
+        elif quoted_hit:
+            triggers.append(f"injection:quoted_data:{pattern.pattern[:30]}")
+            data_score += 0.2
 
     prompt_lower = norm_space.lower()
     for phrase in ESCALATION_PHRASES:
@@ -405,10 +505,12 @@ def scan_input(
             score += 0.2
 
     score = min(score, 1.0)
+    data_score = min(data_score, 1.0)
 
+    # Only the block-eligible `score` can BLOCK; quoted data tops out at FLAG.
     if score >= 0.6:
         verdict = Verdict.BLOCK
-    elif score >= 0.2:
+    elif score >= 0.2 or data_score > 0:
         verdict = Verdict.FLAG
     else:
         verdict = Verdict.PASS
@@ -424,7 +526,7 @@ def scan_input(
 
     return ScanResult(
         verdict=verdict,
-        score=round(score, 3),
+        score=round(max(score, data_score), 3),
         triggers=triggers,
         details={
             "prompt_length": len(prompt),
