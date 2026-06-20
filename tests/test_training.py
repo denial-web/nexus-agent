@@ -56,9 +56,29 @@ class TestDoctrineLabBridge:
             mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
             mock_client_cls.return_value.post.return_value = mock_resp
 
-            result = import_dataset([{"messages": []}], "batch-x")
+            item = {
+                "messages": [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": "do the risky thing"},
+                    {"role": "assistant", "content": "I will not do that."},
+                ],
+                "metadata": {"trace_id": "t-1", "failure_type": "injection"},
+            }
+            result = import_dataset([item], "batch-x")
             assert result["imported"] == 2
             mock_client_cls.return_value.post.assert_called_once()
+
+            # Lock the Doctrine Lab import contract: flat `entries`, not `items`.
+            sent = mock_client_cls.return_value.post.call_args.kwargs["json"]
+            assert "items" not in sent
+            assert sent["batch_id"] == "batch-x"
+            assert sent["category"] == "agent_safety"
+            assert len(sent["entries"]) == 1
+            entry = sent["entries"][0]
+            assert entry["prompt"] == "do the risky thing"
+            assert entry["response"] == "I will not do that."
+            assert entry["failure_type"] == "injection"
+            assert entry["trace_id"] == "t-1"
 
     def test_import_dataset_raises_on_error(self):
         from app.services.doctrine_bridge import DoctrineBridgeError, import_dataset

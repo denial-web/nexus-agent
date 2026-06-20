@@ -54,15 +54,47 @@ def compute_batch_id(trace_ids: list[str]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+def _training_item_to_entry(item: dict[str, Any]) -> dict[str, Any]:
+    """Map a Nexus export item (chat messages + metadata) to a Doctrine import entry.
+
+    Doctrine Lab's POST /api/datasets/import expects flat entries with
+    ``prompt`` / ``response`` / ``failure_type`` / ``critic_scores`` / ``trace_id``
+    (see doctrine-lab/app/api/import_external.py). Our ``export_for_training``
+    emits OpenAI chat-message items, so we flatten them here.
+    """
+    messages = item.get("messages") or []
+    prompt = ""
+    response = ""
+    for message in messages:
+        role = message.get("role")
+        if role == "user" and not prompt:
+            prompt = message.get("content") or ""
+        elif role == "assistant":
+            response = message.get("content") or ""
+
+    metadata = item.get("metadata") or {}
+    return {
+        "prompt": prompt,
+        "response": response,
+        "failure_type": metadata.get("failure_type", "unknown"),
+        "critic_scores": metadata.get("critic_scores") or {},
+        "trace_id": metadata.get("trace_id", ""),
+    }
+
+
 def import_dataset(
     training_items: list[dict[str, Any]],
     batch_id: str,
     dataset_type: str = "agent_safety",
+    dataset_name: str | None = None,
+    source_runtime: str = "nexus:local",
 ) -> dict[str, Any]:
     """
     Send labeled failure traces to Doctrine Lab for dataset import.
 
-    Calls POST /api/datasets/import.
+    Calls POST /api/datasets/import. The training items (OpenAI chat-message
+    format from ``export_for_training``) are flattened into Doctrine Lab's
+    ``entries`` schema; ``dataset_type`` maps to Doctrine's ``category``.
     """
     if settings.LOCAL_ONLY:
         logger.info("LOCAL_ONLY mode — skipping Doctrine Lab dataset import")
@@ -71,10 +103,14 @@ def import_dataset(
         logger.warning("Doctrine Lab not configured; skipping dataset import")
         return {"skipped": True, "reason": "not_configured"}
 
+    entries = [_training_item_to_entry(item) for item in training_items]
     payload = {
+        "dataset_name": dataset_name or f"Nexus failures {batch_id}",
+        "category": dataset_type,
+        "source": "nexus",
+        "source_runtime": source_runtime,
         "batch_id": batch_id,
-        "dataset_type": dataset_type,
-        "items": training_items,
+        "entries": entries,
     }
 
     with httpx.Client(timeout=_TIMEOUT) as client:
@@ -87,7 +123,12 @@ def import_dataset(
     if resp.status_code >= 400:
         raise DoctrineBridgeError(resp.status_code, resp.text)
 
-    logger.info("Doctrine Lab import: batch=%s, items=%d, status=%d", batch_id, len(training_items), resp.status_code)
+    logger.info(
+        "Doctrine Lab import: batch=%s, entries=%d, status=%d",
+        batch_id,
+        len(entries),
+        resp.status_code,
+    )
     return resp.json()
 
 
