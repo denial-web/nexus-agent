@@ -180,6 +180,7 @@ def export_for_training(
                 "failure_type": item.failure_type,
                 "source_node": item.source_node,
                 "batch_id": batch_id,
+                "critic_scores": item.critic_output or {},
             },
         }
 
