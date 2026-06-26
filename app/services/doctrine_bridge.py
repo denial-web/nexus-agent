@@ -73,13 +73,17 @@ def _training_item_to_entry(item: dict[str, Any]) -> dict[str, Any]:
             response = message.get("content") or ""
 
     metadata = item.get("metadata") or {}
-    return {
+    entry = {
         "prompt": prompt,
         "response": response,
         "failure_type": metadata.get("failure_type", "unknown"),
         "critic_scores": metadata.get("critic_scores") or {},
         "trace_id": metadata.get("trace_id", ""),
     }
+    origin = metadata.get("origin")
+    if origin is not None:
+        entry["origin"] = origin
+    return entry
 
 
 def import_dataset(

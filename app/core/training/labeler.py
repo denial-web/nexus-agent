@@ -15,6 +15,29 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+ASFLC_CRITIC_SOURCE = "asflc_golden_dataset"
+ASFLC_SOURCE_NODE = "asflc_import"
+ASFLC_FAILURE_TYPE = "golden_example"
+ASFLC_REVIEWER_ID = "asflc_dataset_import"
+ASFLC_TRACE_ID_PREFIX = "asflc-import-"
+
+
+def classify_labeling_item_origin(item: Any) -> str:
+    """Classify a labeling-queue row as organic runtime vs synthetic harness import."""
+    critic_output = item.critic_output or {}
+    if critic_output.get("source") == ASFLC_CRITIC_SOURCE:
+        return "synthetic"
+    if item.source_node == ASFLC_SOURCE_NODE:
+        return "synthetic"
+    if item.failure_type == ASFLC_FAILURE_TYPE:
+        return "synthetic"
+    if item.reviewer_id == ASFLC_REVIEWER_ID:
+        return "synthetic"
+    trace_id = item.trace_id or ""
+    if trace_id.startswith(ASFLC_TRACE_ID_PREFIX):
+        return "synthetic"
+    return "organic"
+
 
 def push_failure(
     trace_id: str,
@@ -181,6 +204,7 @@ def export_for_training(
                 "source_node": item.source_node,
                 "batch_id": batch_id,
                 "critic_scores": item.critic_output or {},
+                "origin": classify_labeling_item_origin(item),
             },
         }
 

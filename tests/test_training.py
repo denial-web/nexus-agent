@@ -1,10 +1,51 @@
 """Tests for the training flywheel — labeling, export, and Doctrine Lab bridge."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from app.core.training.labeler import export_for_training, label_item, push_failure
+from app.core.training.labeler import (
+    ASFLC_CRITIC_SOURCE,
+    ASFLC_FAILURE_TYPE,
+    ASFLC_REVIEWER_ID,
+    ASFLC_SOURCE_NODE,
+    ASFLC_TRACE_ID_PREFIX,
+    classify_labeling_item_origin,
+    export_for_training,
+    label_item,
+    push_failure,
+)
 from app.services.doctrine_bridge import compute_batch_id, is_configured
+
+
+def _labeling_item(**overrides):
+    defaults = {
+        "critic_output": {},
+        "source_node": "immune",
+        "failure_type": "injection",
+        "reviewer_id": "reviewer-1",
+        "trace_id": "runtime-trace-1",
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+class TestClassifyLabelingItemOrigin:
+    def test_organic_runtime_default(self):
+        assert classify_labeling_item_origin(_labeling_item()) == "organic"
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"critic_output": {"source": ASFLC_CRITIC_SOURCE}},
+            {"source_node": ASFLC_SOURCE_NODE},
+            {"failure_type": ASFLC_FAILURE_TYPE},
+            {"reviewer_id": ASFLC_REVIEWER_ID},
+            {"trace_id": f"{ASFLC_TRACE_ID_PREFIX}deadbeef"},
+        ],
+    )
+    def test_asflc_markers_classify_synthetic(self, overrides):
+        assert classify_labeling_item_origin(_labeling_item(**overrides)) == "synthetic"
 
 
 class TestBatchId:
@@ -80,6 +121,66 @@ class TestDoctrineLabBridge:
             assert entry["response"] == "I will not do that."
             assert entry["failure_type"] == "injection"
             assert entry["trace_id"] == "t-1"
+            assert "origin" not in entry
+
+    def test_import_dataset_passes_per_entry_origin(self):
+        from app.services.doctrine_bridge import import_dataset
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"imported": 2}
+
+        with (
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+            patch("httpx.Client") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.__enter__ = lambda s: s
+            mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_client_cls.return_value.post.return_value = mock_resp
+
+            items = [
+                {
+                    "messages": [
+                        {"role": "user", "content": "asflc prompt"},
+                        {"role": "assistant", "content": "asflc response"},
+                    ],
+                    "metadata": {
+                        "trace_id": "asflc-import-abc",
+                        "failure_type": "golden_example",
+                        "origin": "synthetic",
+                    },
+                },
+                {
+                    "messages": [
+                        {"role": "user", "content": "live prompt"},
+                        {"role": "assistant", "content": "live response"},
+                    ],
+                    "metadata": {
+                        "trace_id": "runtime-trace-1",
+                        "failure_type": "injection",
+                        "origin": "organic",
+                    },
+                },
+            ]
+            import_dataset(items, "batch-mixed")
+            sent = mock_client_cls.return_value.post.call_args.kwargs["json"]
+            assert sent["origin"] == "organic"
+            assert sent["entries"][0]["origin"] == "synthetic"
+            assert sent["entries"][1]["origin"] == "organic"
+
+    def test_training_item_to_entry_omits_origin_when_unset(self):
+        from app.services.doctrine_bridge import _training_item_to_entry
+
+        entry = _training_item_to_entry(
+            {
+                "messages": [
+                    {"role": "user", "content": "p"},
+                    {"role": "assistant", "content": "r"},
+                ],
+                "metadata": {"trace_id": "t-legacy", "failure_type": "injection"},
+            }
+        )
+        assert "origin" not in entry
 
     def test_import_dataset_sends_synthetic_origin(self):
         from app.services.doctrine_bridge import import_dataset
@@ -213,6 +314,30 @@ class TestLabelingFlow:
         found = [m for m in exported if m["metadata"]["trace_id"] == "t-export-1"]
         assert len(found) == 1
         assert found[0]["messages"][-1]["content"] == "good reasoning response"
+        assert found[0]["metadata"]["origin"] == "organic"
+
+    def test_export_tags_asflc_import_as_synthetic(self, db_session):
+        item = push_failure(
+            trace_id=f"{ASFLC_TRACE_ID_PREFIX}abc12345",
+            source_node=ASFLC_SOURCE_NODE,
+            failure_type=ASFLC_FAILURE_TYPE,
+            prompt="golden prompt",
+            response="golden response",
+            critic_output={"source": ASFLC_CRITIC_SOURCE, "category": "reasoning"},
+            db_session=db_session,
+        )
+        label_item(
+            item_id=item["id"],
+            label="correct_flag",
+            reviewer_id=ASFLC_REVIEWER_ID,
+            corrected_response="corrected golden response",
+            db_session=db_session,
+        )
+
+        exported = export_for_training(db_session=db_session)
+        found = [m for m in exported if m["metadata"]["trace_id"] == f"{ASFLC_TRACE_ID_PREFIX}abc12345"]
+        assert len(found) == 1
+        assert found[0]["metadata"]["origin"] == "synthetic"
 
     def test_export_with_custom_batch_id(self, db_session):
         item = push_failure(
