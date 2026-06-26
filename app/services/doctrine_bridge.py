@@ -88,6 +88,7 @@ def import_dataset(
     dataset_type: str = "agent_safety",
     dataset_name: str | None = None,
     source_runtime: str = "nexus:local",
+    origin: str = "organic",
 ) -> dict[str, Any]:
     """
     Send labeled failure traces to Doctrine Lab for dataset import.
@@ -110,6 +111,7 @@ def import_dataset(
         "source": "nexus",
         "source_runtime": source_runtime,
         "batch_id": batch_id,
+        "origin": origin,
         "entries": entries,
     }
 

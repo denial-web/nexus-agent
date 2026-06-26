@@ -73,12 +73,40 @@ class TestDoctrineLabBridge:
             assert "items" not in sent
             assert sent["batch_id"] == "batch-x"
             assert sent["category"] == "agent_safety"
+            assert sent["origin"] == "organic"
             assert len(sent["entries"]) == 1
             entry = sent["entries"][0]
             assert entry["prompt"] == "do the risky thing"
             assert entry["response"] == "I will not do that."
             assert entry["failure_type"] == "injection"
             assert entry["trace_id"] == "t-1"
+
+    def test_import_dataset_sends_synthetic_origin(self):
+        from app.services.doctrine_bridge import import_dataset
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"imported": 1}
+
+        with (
+            patch("app.services.doctrine_bridge.is_configured", return_value=True),
+            patch("httpx.Client") as mock_client_cls,
+        ):
+            mock_client_cls.return_value.__enter__ = lambda s: s
+            mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_client_cls.return_value.post.return_value = mock_resp
+
+            item = {
+                "messages": [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": "harness prompt"},
+                    {"role": "assistant", "content": "blocked"},
+                ],
+                "metadata": {"trace_id": "t-harness", "failure_type": "injection"},
+            }
+            import_dataset([item], "batch-synthetic", origin="synthetic")
+            sent = mock_client_cls.return_value.post.call_args.kwargs["json"]
+            assert sent["origin"] == "synthetic"
 
     def test_import_dataset_raises_on_error(self):
         from app.services.doctrine_bridge import DoctrineBridgeError, import_dataset

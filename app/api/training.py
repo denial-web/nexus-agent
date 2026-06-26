@@ -25,6 +25,7 @@ class ExportRequest(BaseModel):
     dataset_type: str = "agent_safety"
     send_to_doctrine_lab: bool = True
     enrich_evidential: bool = False
+    origin: str = "organic"
 
 
 class EvalReportRequest(BaseModel):
@@ -134,6 +135,7 @@ def export_and_send(req: ExportRequest, db: Session = Depends(get_db)) -> dict:
                 training_items=items,
                 batch_id=batch_id,
                 dataset_type=req.dataset_type,
+                origin=req.origin,
             )
         except Exception as exc:
             logger.warning("Failed to send to Doctrine Lab", exc_info=True)
