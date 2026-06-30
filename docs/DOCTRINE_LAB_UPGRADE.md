@@ -5,17 +5,22 @@
 **Sister factory:** [doctrine-lab/docs/SISTER_REPO_UPGRADE.md](../thinking-DT/doctrine-lab/docs/SISTER_REPO_UPGRADE.md)  
 **Integration smoke report:** [doctrine-lab/data/holdout/integration_smoke_report.md](../thinking-DT/doctrine-lab/data/holdout/integration_smoke_report.md)
 
-## Current integration status (2026-06-30)
+## Current integration status (verified 2026-06-30)
 
 | Check | Status |
 |-------|--------|
-| Injection critic `lora_adapter_path` | `local-lora:injection-mixed-safety-v8-3b` |
+| Injection critic `lora_adapter_path` | `local-lora:injection-mixed-safety-v8-3b` (dev/lab) |
 | `LOCAL_LORA_MODELS_ROOT` | Points to `doctrine-lab/data/models` (in `.env`) |
 | `critic_scores` on Doctrine export | Flattened via `app/core/critic/scores.py` |
-| `tool_injection_redteam` | 18/18 (multi_language BLOCK fixed) |
+| `tool_injection_redteam` | 18/18 (multi_language BLOCK) |
 | `injection_critic_lora_eval` | Registry wires v8 on LLM path |
+| GitHub PR CI (`defense-gate` job) | critic export + redteam + lora eval — **active** |
+| Cross-repo `integration-smoke` | doctrine-lab weekly CI ([run #28420009831](https://github.com/denial-web/doctrine-lab/actions/runs/28420009831)) |
+| Production Ollama path (§6) | **Not deployed** — use for prod ship |
 
-**After registry changes:** restart Nexus so Arbiter cache reloads.
+**After registry changes:** restart Nexus so Arbiter cache reloads (~60s TTL).
+
+**Dev vs prod:** Lab uses in-process `local-lora:…` under `LOCAL_LORA_MODELS_ROOT`. Production should use `config.model_id` → `ollama:injection-mixed-safety-v8-3b` (merged weights, no 3B LoRA in the Nexus process).
 
 ## Adopted adapters (from factory)
 
@@ -116,13 +121,51 @@ curl -X POST "http://127.0.0.1:9000/v1/training/export" \
 
 Entries must include flat `critic_scores` (handled by `labeler.py` + `doctrine_bridge.py`).
 
-### 6. Production path (recommended before ship)
+### 6. Production path (before prod ship — not done yet)
 
-Do **not** load 3B LoRA in-process in production if you can avoid it:
+Do **not** load 3B LoRA in-process in production if you can avoid it.
 
-1. Merge v8 adapter + base in Doctrine Lab / Ollama
-2. Set critic registry `config.model_id` to `ollama:injection-mixed-safety-v8-3b` (or remote OpenAI-compatible URL)
-3. Keep `tool_injection_redteam` in CI as deterministic immune-layer gate
+**Step A — Merge and serve v8 via Ollama** (on a GPU host or sidecar):
+
+```bash
+# 1. Merge adapter + Qwen2.5-3B-Instruct (Doctrine Lab or your merge pipeline)
+#    Adapter: doctrine-lab/data/models/injection-mixed-safety-v8-3b/
+#    Use decode.json profile from the same directory for generation settings.
+
+# 2. Import merged weights into Ollama (example name)
+ollama create injection-mixed-safety-v8-3b -f Modelfile
+
+# 3. Verify
+ollama run injection-mixed-safety-v8-3b "Reply OK if loaded."
+```
+
+**Step B — Point Nexus injection critic at Ollama** (not `local-lora:`):
+
+```bash
+curl -X PATCH "http://127.0.0.1:9000/api/critic/registry/<INJECTION_NODE_ID>" \
+  -H "X-API-Key: $NEXUS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "lora_adapter_path": null,
+    "config": {"model_id": "ollama:injection-mixed-safety-v8-3b"}
+  }'
+```
+
+`Arbiter.load_from_registry()` prefers `config.model_id` over `lora_adapter_path` (see `normalize_adapter_model_id` in `app/core/llm/local_lora.py`).
+
+**Step C — Keep immune-layer CI gate**
+
+PR `defense-gate` continues to run `tool_injection_redteam` (deterministic scanner boundary, independent of LoRA/Ollama).
+
+**Step D — Sign-off before deploy**
+
+```bash
+source venv/bin/activate
+export LOCAL_LORA_MODELS_ROOT=/path/to/doctrine-lab/data/models
+pytest tests/test_critic_scores_export.py tests/eval/injection_critic_lora_eval.py -q
+python -m tests.eval.tool_injection_redteam --json
+make -C /path/to/doctrine-lab cross-project-smoke
+```
 
 ## Key files (edit map)
 
@@ -137,12 +180,23 @@ Do **not** load 3B LoRA in-process in production if you can avoid it:
 | `tests/eval/tool_injection_redteam.py` | **100% block** exit gate at MCP boundary |
 | `tests/eval/injection_critic_lora_eval.py` | Registry + v8 LLM path smoke |
 
-## CI recommendation
+### CI layout (active)
 
-```yaml
-- run: pytest tests/test_critic_scores_export.py tests/eval/injection_critic_lora_eval.py -q
-- run: python -m tests.eval.tool_injection_redteam --json
-- run: make -C ../thinking-DT/doctrine-lab cross-project-smoke
+| Repo | Gate |
+|------|------|
+| **nexus-agent** (this repo) | PR: `defense-gate` (critic export + `injection_critic_lora_eval` + `tool_injection_redteam`) |
+| **doctrine-lab** | PR: `cross-project-smoke` · Weekly: `integration-smoke.yml` |
+| **ClawGuard** | PR: `safety:eval` + export contract |
+
+For Nexus defense PRs, **`defense-gate` + `cross-project-smoke`** is sufficient. Full three-repo sweep runs weekly in Doctrine Lab CI.
+
+```bash
+# Local factory gate (~2 min)
+make -C /path/to/doctrine-lab cross-project-smoke
+
+# Full cross-repo (optional locally; covered by weekly CI)
+cd /path/to/doctrine-lab && source venv/bin/activate
+make integration-smoke
 ```
 
 ## Do NOT (unless human explicitly requests)
@@ -161,7 +215,10 @@ Do **not** load 3B LoRA in-process in production if you can avoid it:
 | Doctrine export missing `critic_scores` | Ensure `push_failure` uses `serialize_critic_scores` (agent_loop, pipeline) |
 | tool_injection_redteam failure | Fix `app/core/immune/scanner.py`; do not weaken exit gate |
 | M1 OOM with critic + other models | One local LoRA at a time; use Ollama for prod |
+| Local `integration-smoke` SQLite disk I/O | Stop Nexus; remove `nexus.db`; `alembic upgrade head`; re-seed critics; re-wire v8 |
+| Empty `critic_registry` after CI prep | Run `_seed_default_critics` or start Nexus once; wire injection → v8 |
+| `make integration-smoke` without venv | `source venv/bin/activate` in doctrine-lab (Python 3.13) |
 
 ## Open Nexus in Cursor — agent prompt seed
 
-> Upgrade Nexus per `docs/DOCTRINE_LAB_UPGRADE.md`. Confirm injection critic is `local-lora:injection-mixed-safety-v8-3b`, `LOCAL_LORA_MODELS_ROOT` points to doctrine-lab `data/models`, and `critic_scores` export is flat. Run `tool_injection_redteam`, `injection_critic_lora_eval`, and `make -C doctrine-lab integration-smoke`. Do not retrain or promote non-v8 adapters without factory gate evidence.
+> Upgrade Nexus per `docs/DOCTRINE_LAB_UPGRADE.md`. Confirm injection critic is `local-lora:injection-mixed-safety-v8-3b` (lab) or `ollama:injection-mixed-safety-v8-3b` (prod), `LOCAL_LORA_MODELS_ROOT` points to doctrine-lab `data/models`, and `critic_scores` export is flat. Run defense-gate tests locally; rely on doctrine-lab weekly `integration-smoke` for cross-repo. Do not retrain or promote non-v8 adapters without factory gate evidence.
