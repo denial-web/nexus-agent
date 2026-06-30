@@ -48,6 +48,26 @@ def _ollama_has_model(model_name: str) -> tuple[bool, str]:
     return False, f"model {model_name!r} not in Ollama tags ({sorted(names)[:5]}…)"
 
 
+def _openai_compatible_has_model(model_name: str) -> tuple[bool, str]:
+    """Check OLLAMA_BASE_URL OpenAI /v1/models (vLLM, TGI, RunPod proxy)."""
+    base = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1").strip().rstrip("/")
+    url = f"{base}/models"
+    req = urllib.request.Request(url, headers={"User-Agent": "nexus-wire-injection-critic/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (403, 502, 503):
+            return False, f"API at {base} returned HTTP {exc.code} (may still be warming up)"
+        return False, f"OpenAI-compatible API error at {base}: HTTP {exc.code}"
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        return False, f"OpenAI-compatible API unreachable at {base}: {exc}"
+    ids = {str(m.get("id", "")) for m in payload.get("data", [])}
+    if model_name in ids:
+        return True, f"model {model_name!r} found at {base}"
+    return False, f"model {model_name!r} not in /v1/models ({sorted(ids)[:5]}…)"
+
+
 def _read_injection_row(conn: sqlite3.Connection) -> tuple[str, str | None, str | None]:
     row = conn.execute(
         "SELECT id, lora_adapter_path, config FROM critic_registry WHERE name = ?",
@@ -95,6 +115,8 @@ def wire_lab(conn: sqlite3.Connection) -> dict:
 
 def wire_prod(conn: sqlite3.Connection, *, ollama_model: str, force: bool) -> dict:
     ok, detail = _ollama_has_model(ollama_model)
+    if not ok:
+        ok, detail = _openai_compatible_has_model(ollama_model)
     if not ok and not force:
         raise RuntimeError(f"{detail} (use --force to wire anyway)")
 
