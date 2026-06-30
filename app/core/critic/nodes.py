@@ -282,6 +282,7 @@ class _LLMCriticBase:
         threshold_halt: float,
         can_halt: bool = False,
         weight: float = 1.0,
+        model_id: str | None = None,
     ):
         self.name = name
         self.prompt_template = prompt_template
@@ -289,6 +290,7 @@ class _LLMCriticBase:
         self.threshold_halt = threshold_halt
         self.can_halt = can_halt
         self.weight = weight
+        self.model_id = (model_id or "").strip() or None
 
     def evaluate(self, context: dict) -> CriticScore:
         h = self._heuristic.evaluate(context)
@@ -312,7 +314,7 @@ class _LLMCriticBase:
 
         prompt = context.get("prompt", "")
         response = context.get("response", "")
-        model_id = settings.CRITIC_MODEL.strip() or None
+        model_id = self.model_id or settings.CRITIC_MODEL.strip() or None
 
         try:
             user_prompt = self.prompt_template.format(prompt=prompt, response=response)
@@ -371,8 +373,11 @@ class LLMReasoningCritic(_LLMCriticBase):
         threshold_halt: float,
         can_halt: bool = False,
         weight: float = 1.0,
+        model_id: str | None = None,
     ):
-        super().__init__(name, prompt_template, threshold_pass, threshold_halt, can_halt, weight)
+        super().__init__(
+            name, prompt_template, threshold_pass, threshold_halt, can_halt, weight, model_id
+        )
         self._heuristic = ReasoningCritic(
             threshold_pass=threshold_pass,
             threshold_halt=threshold_halt,
@@ -395,8 +400,11 @@ class LLMInjectionCritic(_LLMCriticBase):
         threshold_halt: float,
         can_halt: bool = True,
         weight: float = 1.0,
+        model_id: str | None = None,
     ):
-        super().__init__(name, prompt_template, threshold_pass, threshold_halt, can_halt, weight)
+        super().__init__(
+            name, prompt_template, threshold_pass, threshold_halt, can_halt, weight, model_id
+        )
         self._heuristic = InjectionCritic(name=name, can_halt=can_halt)
 
 

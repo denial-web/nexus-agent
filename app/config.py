@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # Local / HuggingFace (Nexus Spin v5.3 — use model_id local:repo/name or nexus-spin-v5.3)
     LOCAL_HF_MODEL_ID: str = ""
     LOCAL_HF_DEVICE: str = "cpu"
+    # Doctrine Lab adapters for critic flywheel (local-lora:<suffix> under this root)
+    LOCAL_LORA_MODELS_ROOT: str = ""
 
     # Covernor governance
     APPROVAL_QUORUM: int = 2

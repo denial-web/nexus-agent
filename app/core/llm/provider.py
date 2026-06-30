@@ -211,6 +211,12 @@ def _resolve_route(
             if resolved in ("local", "nexus-spin"):
                 resolved = settings.LOCAL_HF_MODEL_ID or "nexus-spin-v5.3"
             return ("local", resolved, "")
+        if lower.startswith("local-lora:"):
+            resolved = mid.split(":", 1)[1].strip()
+            if not resolved:
+                logger.warning("model_id %r has empty local-lora suffix; falling back to mock", mid)
+                return ("mock", "mock", "")
+            return ("local_lora", resolved, "")
         if lower.startswith("ollama:") or lower == "ollama":
             resolved = mid.split(":", 1)[-1].strip() if ":" in mid else settings.OLLAMA_DEFAULT_MODEL
             if resolved in ("ollama", ""):
@@ -407,6 +413,39 @@ def _call_deepseek(
         raw = None
 
     return text, response.model or model, token_count, raw
+
+
+def _call_local_lora(
+    prompt: str,
+    adapter_suffix: str,
+    system_prompt: str | None,
+    model_id: str | None,
+) -> tuple[str, str, int, dict[str, Any] | None]:
+    """PEFT adapter under LOCAL_LORA_MODELS_ROOT (local-lora:<suffix>)."""
+    full_model_id = f"local-lora:{adapter_suffix}"
+    try:
+        from app.core.llm.local_lora import generate_local_lora
+
+        text, used_model, token_count = generate_local_lora(
+            full_model_id,
+            prompt,
+            system_prompt,
+        )
+        return text, used_model, token_count, None
+    except ImportError:
+        logger.warning(
+            "local-lora %r: peft/transformers not installed; using stub output",
+            full_model_id,
+        )
+        stub = (
+            f'{{"local_lora_stub": true, "model": "{full_model_id}", '
+            f'"note": "Install torch+peft+transformers for real adapter inference."}}'
+        )
+        return stub, full_model_id, _estimate_tokens(stub), None
+    except Exception:
+        logger.exception("Local LoRA generation failed for %r", model_id or full_model_id)
+        stub = f'{{"local_lora_error": true, "model": "{full_model_id}"}}'
+        return stub, full_model_id, _estimate_tokens(stub), None
 
 
 def _call_local_hf(
@@ -619,6 +658,23 @@ def generate(
                 token_count=token_count,
                 latency_ms=round(latency_ms, 2),
                 provider="local",
+                raw_response=raw,
+                request_id=rid if rid != "-" else None,
+            )
+            cache.put(prompt, eff_model_id, system_prompt, resp)
+            return resp
+
+        if route_provider == "local_lora":
+            text, used_model, token_count, raw = _call_local_lora(
+                prompt, resolved_model, system_prompt, eff_model_id
+            )
+            latency_ms = (time.perf_counter() - start) * 1000
+            resp = LLMResponse(
+                text=text,
+                model_id=used_model,
+                token_count=token_count,
+                latency_ms=round(latency_ms, 2),
+                provider="local_lora",
                 raw_response=raw,
                 request_id=rid if rid != "-" else None,
             )

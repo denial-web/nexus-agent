@@ -221,6 +221,7 @@ class Arbiter:
     @classmethod
     def load_from_registry(cls, db_session: "Session") -> "Arbiter":
         """Build an Arbiter from active `critic_registry` rows; fallback if none."""
+        from app.core.llm.local_lora import normalize_adapter_model_id
         from app.core.critic.nodes import (
             InjectionCritic,
             LLMInjectionCritic,
@@ -247,6 +248,7 @@ class Arbiter:
             name = row.name
             tpl = (row.prompt_template or "").strip()
             use_llm = bool(tpl)
+            adapter_model_id = normalize_adapter_model_id(row.lora_adapter_path, row.config)
 
             try:
                 if nt == "reasoning":
@@ -259,6 +261,7 @@ class Arbiter:
                                 threshold_halt=row.threshold_halt,
                                 can_halt=row.can_halt,
                                 weight=row.weight,
+                                model_id=adapter_model_id,
                             )
                         )
                     else:
@@ -280,6 +283,7 @@ class Arbiter:
                                 threshold_halt=row.threshold_halt,
                                 can_halt=row.can_halt,
                                 weight=row.weight,
+                                model_id=adapter_model_id,
                             )
                         )
                     else:
