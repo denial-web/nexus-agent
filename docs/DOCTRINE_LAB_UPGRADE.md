@@ -127,16 +127,29 @@ Do **not** load 3B LoRA in-process in production if you can avoid it.
 
 **Step A — Merge v8 and create Ollama model** (Doctrine Lab factory):
 
+**Recommended (RunPod GPU — no local merge on M1/M2):**
+
 ```bash
 cd /path/to/doctrine-lab && source venv/bin/activate
-pip install torch peft transformers accelerate   # once, on merge host
+# .env: RUNPOD_API_KEY, RUNPOD_SSH_KEY_PATH (~/.ssh/id_ed25519)
+make runpod-check
+make runpod-merge-v8
+# Downloads merged weights → data/models/injection-mixed-safety-v8-3b-merged/ + Modelfile
+python scripts/export_ollama_injection_v8.py --print-create-cmd
+# On Ollama host: ollama create injection-mixed-safety-v8-3b -f ...
+```
 
+**Alternative (local GPU or x86 merge host):**
+
+```bash
+pip install torch peft transformers accelerate
 python scripts/export_ollama_injection_v8.py --check
 python scripts/export_ollama_injection_v8.py --merge
 python scripts/export_ollama_injection_v8.py --modelfile
 python scripts/export_ollama_injection_v8.py --print-create-cmd
-# Run the printed: ollama create injection-mixed-safety-v8-3b -f ...
 ```
+
+**Alternative (vLLM on RunPod, no Ollama):** serve merged HF weights with an OpenAI-compatible endpoint and set Nexus `OLLAMA_BASE_URL` to that URL (Nexus treats Ollama as OpenAI-compatible).
 
 **Step B — Wire Nexus injection critic to Ollama** (this repo):
 
