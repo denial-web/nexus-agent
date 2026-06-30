@@ -2,7 +2,9 @@
 
 Nexus exports labeled failure traces to Doctrine Lab; trained adapters return via the critic registry.
 
-See the full runbook: [doctrine-lab/docs/CLOSED_LOOP_RUNBOOK.md](../../thinking-DT/doctrine-lab/docs/CLOSED_LOOP_RUNBOOK.md)
+**Upgrade guide (open this in Cursor for safety work):** [DOCTRINE_LAB_UPGRADE.md](DOCTRINE_LAB_UPGRADE.md)  
+**Factory handoff:** [doctrine-lab/docs/SISTER_REPO_UPGRADE.md](../../thinking-DT/doctrine-lab/docs/SISTER_REPO_UPGRADE.md)  
+**Full runbook:** [doctrine-lab/docs/CLOSED_LOOP_RUNBOOK.md](../../thinking-DT/doctrine-lab/docs/CLOSED_LOOP_RUNBOOK.md)
 
 ## Quick reference
 

@@ -6,6 +6,10 @@ Nexus Agent is a **Zero-Trust & Self-Evolving AI Agent System**. It wraps LLM ca
 
 **Sister project**: [Doctrine Lab](../thinking-DT/doctrine-lab/) provides the dataset generation, curation, fine-tuning pipeline, and benchmark evaluation. Nexus Agent is the runtime; Doctrine Lab is the training factory.
 
+**Doctrine Lab upgrade (read first for safety/critic/export work):** [docs/DOCTRINE_LAB_UPGRADE.md](docs/DOCTRINE_LAB_UPGRADE.md) · Factory handoff: [doctrine-lab/docs/SISTER_REPO_UPGRADE.md](../thinking-DT/doctrine-lab/docs/SISTER_REPO_UPGRADE.md)
+
+**Adopted injection critic (2026-06-30):** `local-lora:injection-mixed-safety-v8-3b` via `LOCAL_LORA_MODELS_ROOT`. Verify: `make -C ../thinking-DT/doctrine-lab integration-smoke`.
+
 **Doctrine Lab Milestone 1 (B.1 + B.2) is COMPLETE**: Doctrine Lab now has agent-safety eval tasks (`agent_safety`, `agent_reasoning`, `agent_governance`, `injection_resistance`) and a `POST /api/datasets/import` endpoint ready to receive Nexus failure traces.
 
 ## Tech Stack
