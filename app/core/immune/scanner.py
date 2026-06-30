@@ -507,6 +507,14 @@ def scan_input(
     score = min(score, 1.0)
     data_score = min(data_score, 1.0)
 
+    # Tool-call boundary (treat_quoted_as_data=False): a single bare injection
+    # pattern match is a hard block — arguments get no harden_prompt fallback.
+    if not treat_quoted_as_data and any(
+        t.startswith("injection:") and not t.startswith("injection:quoted_data:")
+        for t in triggers
+    ):
+        score = max(score, 0.6)
+
     # Only the block-eligible `score` can BLOCK; quoted data tops out at FLAG.
     if score >= 0.6:
         verdict = Verdict.BLOCK

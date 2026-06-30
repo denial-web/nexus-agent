@@ -13,6 +13,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.critic.scores import flatten_critic_output
+
 logger = logging.getLogger(__name__)
 
 ASFLC_CRITIC_SOURCE = "asflc_golden_dataset"
@@ -203,7 +205,7 @@ def export_for_training(
                 "failure_type": item.failure_type,
                 "source_node": item.source_node,
                 "batch_id": batch_id,
-                "critic_scores": item.critic_output or {},
+                "critic_scores": flatten_critic_output(item.critic_output or {}),
                 "origin": classify_labeling_item_origin(item),
             },
         }

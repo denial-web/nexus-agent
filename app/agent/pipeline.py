@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.core.covernor.policy_engine import evaluate_action
 from app.core.critic.arbiter import Arbiter, CriticScore
+from app.core.critic.scores import serialize_critic_scores
 from app.core.immune.scanner import Verdict, harden_prompt, scan_input, scan_output
 from app.core.llm.provider import generate
 from app.core.training.calibration import record_critic_calibration
@@ -36,15 +37,7 @@ logger = logging.getLogger(__name__)
 
 def _serialize_scores(scores: dict) -> dict:
     """Convert CriticScore dataclass objects to JSON-safe dicts."""
-    out = {}
-    for k, v in scores.items():
-        if isinstance(v, CriticScore):
-            out[k] = asdict(v)
-        elif isinstance(v, dict):
-            out[k] = v
-        else:
-            out[k] = {"score": float(v)} if isinstance(v, (int, float)) else str(v)
-    return out
+    return serialize_critic_scores(scores)
 
 
 _ARBITER_TTL_SECONDS = 60

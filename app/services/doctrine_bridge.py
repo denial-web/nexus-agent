@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.core.critic.scores import flatten_critic_output
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ def _training_item_to_entry(item: dict[str, Any]) -> dict[str, Any]:
         "prompt": prompt,
         "response": response,
         "failure_type": metadata.get("failure_type", "unknown"),
-        "critic_scores": metadata.get("critic_scores") or {},
+        "critic_scores": flatten_critic_output(metadata.get("critic_scores")),
         "trace_id": metadata.get("trace_id", ""),
     }
     origin = metadata.get("origin")

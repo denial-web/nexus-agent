@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.agent.pipeline import PipelineResult, _record_run, get_arbiter
+from app.core.critic.scores import serialize_critic_scores
 from app.config import settings
 from app.core.agent.registry import ToolRegistry
 from app.core.agent.types import RegisteredTool
@@ -757,7 +758,9 @@ def run_agent(
                         failure_type="halt",
                         prompt=prompt,
                         response=content,
-                        critic_output=result.critic_result,
+                        critic_output=serialize_critic_scores(
+                            (result.critic_result or {}).get("scores", result.critic_result or {})
+                        ),
                         db_session=db_session,
                     )
                 break
@@ -919,7 +922,7 @@ def run_agent(
                     failure_type="halt",
                     prompt=prompt,
                     response=step_summary,
-                    critic_output={"scores": crit.scores},
+                    critic_output=serialize_critic_scores(crit.scores),
                     db_session=db_session,
                 )
             break
