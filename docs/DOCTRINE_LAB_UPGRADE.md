@@ -16,7 +16,7 @@
 | `injection_critic_lora_eval` | Registry wires v8 on LLM path |
 | GitHub PR CI (`defense-gate` job) | critic export + redteam + lora eval — **active** |
 | Cross-repo `integration-smoke` | doctrine-lab weekly CI ([run #28420009831](https://github.com/denial-web/doctrine-lab/actions/runs/28420009831)) |
-| Production Ollama path (§6) | **Not deployed** — use for prod ship |
+| Production Ollama path (§6) | Scripts ready — run merge + `wire_injection_critic --mode prod` on deploy host |
 
 **After registry changes:** restart Nexus so Arbiter cache reloads (~60s TTL).
 
@@ -121,37 +121,38 @@ curl -X POST "http://127.0.0.1:9000/v1/training/export" \
 
 Entries must include flat `critic_scores` (handled by `labeler.py` + `doctrine_bridge.py`).
 
-### 6. Production path (before prod ship — not done yet)
+### 6. Production path (before prod ship)
 
 Do **not** load 3B LoRA in-process in production if you can avoid it.
 
-**Step A — Merge and serve v8 via Ollama** (on a GPU host or sidecar):
+**Step A — Merge v8 and create Ollama model** (Doctrine Lab factory):
 
 ```bash
-# 1. Merge adapter + Qwen2.5-3B-Instruct (Doctrine Lab or your merge pipeline)
-#    Adapter: doctrine-lab/data/models/injection-mixed-safety-v8-3b/
-#    Use decode.json profile from the same directory for generation settings.
+cd /path/to/doctrine-lab && source venv/bin/activate
+pip install torch peft transformers accelerate   # once, on merge host
 
-# 2. Import merged weights into Ollama (example name)
-ollama create injection-mixed-safety-v8-3b -f Modelfile
-
-# 3. Verify
-ollama run injection-mixed-safety-v8-3b "Reply OK if loaded."
+python scripts/export_ollama_injection_v8.py --check
+python scripts/export_ollama_injection_v8.py --merge
+python scripts/export_ollama_injection_v8.py --modelfile
+python scripts/export_ollama_injection_v8.py --print-create-cmd
+# Run the printed: ollama create injection-mixed-safety-v8-3b -f ...
 ```
 
-**Step B — Point Nexus injection critic at Ollama** (not `local-lora:`):
+**Step B — Wire Nexus injection critic to Ollama** (this repo):
 
 ```bash
-curl -X PATCH "http://127.0.0.1:9000/api/critic/registry/<INJECTION_NODE_ID>" \
-  -H "X-API-Key: $NEXUS_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "lora_adapter_path": null,
-    "config": {"model_id": "ollama:injection-mixed-safety-v8-3b"}
-  }'
+cd /path/to/nexus-agent && source venv/bin/activate
+# .env: OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+python scripts/wire_injection_critic.py --mode prod
+python scripts/wire_injection_critic.py --mode status
+# Restart Nexus
 ```
 
-`Arbiter.load_from_registry()` prefers `config.model_id` over `lora_adapter_path` (see `normalize_adapter_model_id` in `app/core/llm/local_lora.py`).
+To revert to lab/dev in-process LoRA:
+
+```bash
+python scripts/wire_injection_critic.py --mode lab
+```
 
 **Step C — Keep immune-layer CI gate**
 
@@ -179,6 +180,8 @@ make -C /path/to/doctrine-lab cross-project-smoke
 | `app/core/immune/scanner.py` | Tool-call boundary blocking (`is_tool_call_blocked`) |
 | `tests/eval/tool_injection_redteam.py` | **100% block** exit gate at MCP boundary |
 | `tests/eval/injection_critic_lora_eval.py` | Registry + v8 LLM path smoke |
+| `scripts/wire_injection_critic.py` | Switch injection critic lab (`local-lora`) ↔ prod (`ollama:`) |
+| `tests/test_wire_injection_critic.py` | Lab/prod registry wiring contract |
 
 ### CI layout (active)
 
