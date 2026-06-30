@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     NEXUS_API_KEY: str = ""
     RATE_LIMIT_RPM: int = 30
+    RATE_LIMIT_FAIL_CLOSED: bool = True  # block requests when Redis rate-limit backend is down
     MAX_PROMPT_LENGTH: int = 50_000
     MAX_REQUEST_BODY_BYTES: int = 10_485_760  # 10 MB
     REQUEST_TIMEOUT_SECONDS: float = 120.0

@@ -141,10 +141,12 @@ class RedisBackend(RateLimiterBackend):
     set to window+1 as a safety net.
 
     Includes automatic reconnection: if a check fails due to a connection
-    error, one reconnect attempt is made before falling back to allow.
+    error, one reconnect attempt is made. When ``RATE_LIMIT_FAIL_CLOSED`` is
+    true (default), requests are blocked if Redis stays unavailable.
     """
 
     _RECONNECT_COOLDOWN = 5.0
+    _FAIL_CLOSED_RETRY_AFTER = 60
 
     def __init__(self, redis_url: str) -> None:
         self._redis_url = redis_url
@@ -186,15 +188,27 @@ class RedisBackend(RateLimiterBackend):
         self._connect()
         return self._client is not None
 
+    def _unavailable_result(self, limit: int) -> RateLimitResult:
+        from app.config import settings
+
+        if settings.RATE_LIMIT_FAIL_CLOSED:
+            return RateLimitResult(
+                allowed=False,
+                remaining=0,
+                retry_after=self._FAIL_CLOSED_RETRY_AFTER,
+                limit=limit,
+            )
+        return RateLimitResult(
+            allowed=True,
+            remaining=limit,
+            retry_after=0,
+            limit=limit,
+        )
+
     def check(self, key: str, limit: int, window_seconds: int) -> RateLimitResult:
         if self._client is None:
             if not self._try_reconnect():
-                return RateLimitResult(
-                    allowed=True,
-                    remaining=limit,
-                    retry_after=0,
-                    limit=limit,
-                )
+                return self._unavailable_result(limit)
 
         import os
 
@@ -238,12 +252,7 @@ class RedisBackend(RateLimiterBackend):
                     )
                 except Exception:
                     pass
-            return RateLimitResult(
-                allowed=True,
-                remaining=limit,
-                retry_after=0,
-                limit=limit,
-            )
+            return self._unavailable_result(limit)
 
     def reset(self) -> None:
         if self._client is None:

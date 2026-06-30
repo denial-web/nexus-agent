@@ -134,7 +134,21 @@ class TestRedisBackendMocked:
         backend = _make_redis_backend(script_return=[0, 0, 10])
         assert backend.is_allowed("ip1", 5, 60) is False
 
-    def test_allows_on_redis_error_with_failed_reconnect(self):
+    def test_blocks_on_redis_error_with_failed_reconnect_when_fail_closed(self):
+        backend = _make_redis_backend(
+            script_side_effect=Exception("connection lost"),
+        )
+        backend._last_reconnect = 0.0
+        with patch.object(backend, "_try_reconnect", return_value=False):
+            result = backend.check("ip1", 5, 60)
+        assert result.allowed is False
+        assert result.remaining == 0
+        assert result.retry_after == 60
+
+    def test_allows_on_redis_error_when_fail_open(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "RATE_LIMIT_FAIL_CLOSED", False)
         backend = _make_redis_backend(
             script_side_effect=Exception("connection lost"),
         )
@@ -151,8 +165,8 @@ class TestRedisBackendMocked:
         backend._last_reconnect = 0.0
         with patch.object(backend, "_try_reconnect", return_value=False):
             result = backend.check("ip1", 5, 60)
-        assert result.allowed is True
-        assert result.remaining == 5
+        assert result.allowed is False
+        assert result.remaining == 0
 
     def test_backend_type_connected(self):
         backend = _make_redis_backend()
