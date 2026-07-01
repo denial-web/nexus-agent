@@ -44,7 +44,7 @@ Concretely: prompt-injection scanning in 11 languages, default-deny governance w
 
 **[See the benchmark numbers](docs/benchmarks.md)** — six nightly benchmarks covering bitemporal recall, contradiction handling, causal derivation, tool-call injection, skill composition (with a hostile probe), and end-to-end memory uplift in the agent loop. All six pass their exit gates on the current main.
 
-**[External eval (Tier A)](docs/external_eval.md)** — InjecAgent + AgentDojo subset numbers for the defended stack vs API baselines, with honest subset disclosure. Snapshot: [docs/evidence/tier_a_snapshot_2026-07-01.md](docs/evidence/tier_a_snapshot_2026-07-01.md).
+**[External eval (Tier A)](docs/external_eval.md)** — InjecAgent + AgentDojo subset numbers for the defended stack vs API baselines, with honest subset disclosure. Snapshot: [docs/evidence/tier_a_snapshot_2026-07-01.md](docs/evidence/tier_a_snapshot_2026-07-01.md). Launch checklist: [docs/LAUNCH_PREFLIGHT.md](docs/LAUNCH_PREFLIGHT.md).
 
 **[Memory architecture](docs/memory.md)** — how beliefs are written, retrieved, and audited under the same zero-trust contract as every other Nexus surface (bitemporal + Beta confidence + causal DAG + hash-chained integrity).
 

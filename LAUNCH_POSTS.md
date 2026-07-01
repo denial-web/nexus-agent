@@ -2,9 +2,65 @@
 
 Use these as starting points. Adjust tone to match each platform.
 
+**Pre-flight:** [docs/LAUNCH_PREFLIGHT.md](docs/LAUNCH_PREFLIGHT.md)
+
 ---
 
-## Hacker News — Show HN
+## Week 3 warm-up — r/LocalLLaMA (post before HN)
+
+**Post this first** — softer tone, eval methodology angle, not a Show HN announcement.
+
+**Subreddit:** r/LocalLLaMA  
+**Title:** OSS agent runtime with 11-language injection scan + reproducible InjecAgent/AgentDojo subset evals (not another chat wrapper)
+
+**Body:**
+
+I've been building **Nexus Agent** (Apache 2.0) — a governed agent *runtime* (immune scan → critic tree → default-deny governance → hash-chained audit), not a new base model.
+
+Quick try on a fresh clone — **no API keys** for the fast path:
+
+```bash
+git clone https://github.com/denial-web/nexus-agent.git
+cd nexus-agent
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python examples/injection_demo.py --immune-only
+```
+
+You'll see safe prompts `PASS`, English injection `BLOCK`, CN/RU/ES/AR `FLAG` (hardened before LLM). README has an animated GIF of the same output.
+
+**What I'm sharing early (looking for feedback on eval honesty, not hype):**
+
+We publish a **three-row** external eval story — undefended API vs 3B safety critic vs full defended Nexus stack — on fixed **InjecAgent** and **AgentDojo** derivatives (not full upstream leaderboards):
+
+- InjecAgent subset: v8 critic **ties gpt-4o** on attack FNR (0.0208 on our 48-attack derivative)
+- AgentDojo subset5: defended Nexus stack security **0.6** vs gpt-4o-mini **1.0** (utility still loses — we're not claiming a general-purpose win)
+
+Full disclosure + snapshot: https://github.com/denial-web/nexus-agent/blob/master/docs/external_eval.md
+
+Also runs with local HF / Ollama / mock mode for the full pipeline. **1400 tests** in CI.
+
+Not trying to replace LangChain or OpenClaw — it's the control layer in front of them (`POST /v1/skills/import` for SKILL.md, Hermes-class models via `LOCAL_HF_MODEL_ID`).
+
+Happy to answer architecture questions or take punches on the benchmark methodology before a wider launch.
+
+GitHub: https://github.com/denial-web/nexus-agent
+
+---
+
+## Week 3 warm-up — X (optional, same day as Reddit)
+
+**Tweet:**
+
+Shipped an animated injection demo on the Nexus Agent README — 11-language immune scan, PASS/BLOCK/FLAG in &lt;1s with no API keys:
+
+`python examples/injection_demo.py --immune-only`
+
+Tier A eval methodology (honest subset disclosure): github.com/denial-web/nexus-agent/blob/master/docs/external_eval.md
+
+Apache 2.0 · 1400 tests
+
+---
 
 **Title:** Show HN: Nexus Agent – Zero-trust security layer for LLM agents (blocks injection in 11 languages)
 
@@ -24,7 +80,7 @@ Nexus Agent adds 7 security checkpoints around every LLM call:
 
 It works as a standalone pipeline or as a security layer in front of your existing agent stack. Supports Gemini, OpenAI, DeepSeek, and local models. Runs in mock mode (no API keys needed) for testing.
 
-Built with Python 3.13, FastAPI, SQLAlchemy 2.0. 384 tests, dual-DB CI (SQLite + Postgres).
+Built with Python 3.13, FastAPI, SQLAlchemy 2.0. **1400 tests**, dual-DB CI (SQLite + Postgres).
 
 **Benchmarks:** nightly in-repo gates ([docs/benchmarks.md](docs/benchmarks.md)) plus Tier A external bars — InjecAgent + AgentDojo subset, three-row comparison (API vs v8 critic vs defended Nexus stack). Numbers + honest disclosure: [docs/external_eval.md](docs/external_eval.md). We do **not** claim full upstream leaderboard leadership or "beat GPT overall."
 
@@ -68,7 +124,7 @@ I've been building Nexus Agent, an open-source system that adds security boundar
 
 Works with Gemini, OpenAI, DeepSeek, local HuggingFace models, or in mock mode (no API keys needed).
 
-Python 3.13, FastAPI, 384 tests. Apache 2.0 licensed.
+Python 3.13, FastAPI, **1400 tests**. Apache 2.0 licensed.
 
 **External eval:** [docs/external_eval.md](docs/external_eval.md) — InjecAgent subset (v8 ties gpt-4o on attack FNR) + AgentDojo subset5 (Nexus defended stack security 0.6 vs gpt-4o-mini 1.0). Fixed derivatives, not full leaderboards.
 
@@ -137,7 +193,7 @@ Works in mock mode — no API keys needed.
 
 External eval (Tier A): github.com/denial-web/nexus-agent/blob/main/docs/external_eval.md
 
-384 tests. Apache 2.0 licensed.
+1400 tests. Apache 2.0 licensed.
 
 Star it if this is useful: github.com/denial-web/nexus-agent
 
