@@ -14,6 +14,13 @@ cd nexus-agent
 python examples/injection_demo.py --immune-only
 ```
 
+Regenerate the README GIF (requires `brew install agg`):
+
+```bash
+make injection-demo-gif
+# → docs/assets/injection_demo.gif
+```
+
 Record the terminal. Expected lines:
 
 ```text

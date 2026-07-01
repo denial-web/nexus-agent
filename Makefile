@@ -1,4 +1,4 @@
-.PHONY: install dev test test-fast test-cov lint format typecheck audit migrate serve docker-up docker-down clean
+.PHONY: install dev test test-fast test-cov lint format typecheck audit migrate serve docker-up docker-down clean injection-demo-gif
 
 install:
 	pip install -r requirements.txt
@@ -47,3 +47,6 @@ clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	rm -f test_nexus.db nexus.db
 	rm -rf .pytest_cache .mypy_cache
+
+injection-demo-gif:
+	python scripts/build_injection_demo_gif.py

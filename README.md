@@ -219,6 +219,8 @@ Every response includes the full pipeline audit trail — what the immune scanne
 
 ### Try the Injection Demo
 
+![Injection detection demo — multilingual PASS / BLOCK / FLAG](docs/assets/injection_demo.gif)
+
 See the Agent-Immune scanner block and flag attacks across languages:
 
 ```bash
