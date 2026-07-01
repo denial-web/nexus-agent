@@ -44,6 +44,8 @@ Concretely: prompt-injection scanning in 11 languages, default-deny governance w
 
 **[See the benchmark numbers](docs/benchmarks.md)** — six nightly benchmarks covering bitemporal recall, contradiction handling, causal derivation, tool-call injection, skill composition (with a hostile probe), and end-to-end memory uplift in the agent loop. All six pass their exit gates on the current main.
 
+**[External eval (Tier A)](docs/external_eval.md)** — InjecAgent + AgentDojo subset numbers for the defended stack vs API baselines, with honest subset disclosure. Snapshot: [docs/evidence/tier_a_snapshot_2026-07-01.md](docs/evidence/tier_a_snapshot_2026-07-01.md).
+
 **[Memory architecture](docs/memory.md)** — how beliefs are written, retrieved, and audited under the same zero-trust contract as every other Nexus surface (bitemporal + Beta confidence + causal DAG + hash-chained integrity).
 
 ---
@@ -220,10 +222,14 @@ Every response includes the full pipeline audit trail — what the immune scanne
 See the Agent-Immune scanner block and flag attacks across languages:
 
 ```bash
+# Fast (~1s): immune scanner only — good for GIF / first clone
+python examples/injection_demo.py --immune-only
+
+# Full pipeline (make dev in another terminal; mock LLM when no provider keys)
 python examples/injection_demo.py
 ```
 
-Safe prompts pass through. Injections are **blocked** (English, highest confidence) or **flagged** and hardened (injection fragments stripped before reaching the LLM). More examples in [`examples/`](examples/).
+Recording guide: [docs/demo/injection_gif.md](docs/demo/injection_gif.md). Safe prompts pass through. Injections are **blocked** (English, highest confidence) or **flagged** and hardened (injection fragments stripped before reaching the LLM). More examples in [`examples/`](examples/).
 
 ---
 

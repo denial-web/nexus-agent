@@ -26,11 +26,14 @@ It works as a standalone pipeline or as a security layer in front of your existi
 
 Built with Python 3.13, FastAPI, SQLAlchemy 2.0. 384 tests, dual-DB CI (SQLite + Postgres).
 
+**Benchmarks:** nightly in-repo gates ([docs/benchmarks.md](docs/benchmarks.md)) plus Tier A external bars — InjecAgent + AgentDojo subset, three-row comparison (API vs v8 critic vs defended Nexus stack). Numbers + honest disclosure: [docs/external_eval.md](docs/external_eval.md). We do **not** claim full upstream leaderboard leadership or "beat GPT overall."
+
 Try it:
 
     git clone https://github.com/denial-web/nexus-agent.git
     cd nexus-agent && make dev
-    python examples/injection_demo.py
+    python examples/injection_demo.py --immune-only   # fast, no API keys
+    python examples/injection_demo.py                 # full pipeline
 
 GitHub: https://github.com/denial-web/nexus-agent
 
@@ -66,6 +69,8 @@ I've been building Nexus Agent, an open-source system that adds security boundar
 Works with Gemini, OpenAI, DeepSeek, local HuggingFace models, or in mock mode (no API keys needed).
 
 Python 3.13, FastAPI, 384 tests. Apache 2.0 licensed.
+
+**External eval:** [docs/external_eval.md](docs/external_eval.md) — InjecAgent subset (v8 ties gpt-4o on attack FNR) + AgentDojo subset5 (Nexus defended stack security 0.6 vs gpt-4o-mini 1.0). Fixed derivatives, not full leaderboards.
 
 GitHub: https://github.com/denial-web/nexus-agent
 
@@ -126,9 +131,11 @@ Try it in 3 commands:
 
 git clone github.com/denial-web/nexus-agent
 cd nexus-agent && make dev
-python examples/injection_demo.py
+python examples/injection_demo.py --immune-only
 
 Works in mock mode — no API keys needed.
+
+External eval (Tier A): github.com/denial-web/nexus-agent/blob/main/docs/external_eval.md
 
 384 tests. Apache 2.0 licensed.
 
